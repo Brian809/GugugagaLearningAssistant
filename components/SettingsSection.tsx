@@ -10,22 +10,22 @@ import {
   Modal,
   Switch,
 } from "react-native";
-import { useSettingsStore } from "../stores/settingsStore";
-import { Setting } from "../utils/settings";
+import { useLLMProviderStore } from "../stores/llmProviderStore";
+import { LLMProvider } from "../utils/llmProviders";
 import { Ionicons } from "@expo/vector-icons";
 
 export default function SettingsSection() {
-  const { settings, activeSetting } = useSettingsStore();
-  const loadSettings = useSettingsStore((state) => state.loadSettings);
-  const addSetting = useSettingsStore((state) => state.addSetting);
-  const updateSetting = useSettingsStore((state) => state.updateSetting);
-  const removeSetting = useSettingsStore((state) => state.removeSetting);
-  const setActiveSetting = useSettingsStore((state) => state.setActiveSetting);
-  const clearSettings = useSettingsStore((state) => state.clearSettings);
+  const { providers, activeProvider } = useLLMProviderStore();
+  const loadProviders = useLLMProviderStore((state) => state.loadProviders);
+  const addProvider = useLLMProviderStore((state) => state.addProvider);
+  const updateProvider = useLLMProviderStore((state) => state.updateProvider);
+  const removeProvider = useLLMProviderStore((state) => state.removeProvider);
+  const setActiveProvider = useLLMProviderStore((state) => state.setActiveProvider);
+  const clearProviders = useLLMProviderStore((state) => state.clearProviders);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [formData, setFormData] = useState<Partial<Setting>>({
+  const [formData, setFormData] = useState<Partial<LLMProvider>>({
     apiKey: "",
     baseUrl: "",
     providerName: "",
@@ -34,43 +34,43 @@ export default function SettingsSection() {
   });
 
   useEffect(() => {
-    loadSettings();
-  }, [loadSettings]);
+    loadProviders();
+  }, [loadProviders]);
 
-  const handleSaveSetting = async () => {
+  const handleSaveProvider = async () => {
     try {
       if (editingIndex !== null) {
-        // 更新现有设置
-        await updateSetting(editingIndex, formData as Setting);
+        // 更新现有供应商
+        await updateProvider(editingIndex, formData as LLMProvider);
       } else {
-        // 添加新设置
-        await addSetting(formData as Setting);
+        // 添加新供应商
+        await addProvider(formData as LLMProvider);
       }
       setModalVisible(false);
       resetForm();
     } catch {
-      Alert.alert("错误", "保存设置失败");
+      Alert.alert("错误", "保存供应商失败");
     }
   };
 
-  const handleEditSetting = (index: number) => {
-    const setting = settings[index];
-    setFormData({ ...setting });
+  const handleEditProvider = (index: number) => {
+    const provider = providers[index];
+    setFormData({ ...provider });
     setEditingIndex(index);
     setModalVisible(true);
   };
 
-  const handleDeleteSetting = (index: number) => {
-    Alert.alert("删除设置", "确定要删除这个设置吗？", [
+  const handleDeleteProvider = (index: number) => {
+    Alert.alert("删除供应商", "确定要删除这个供应商吗？", [
       { text: "取消", style: "cancel" },
       {
         text: "删除",
         style: "destructive",
         onPress: async () => {
           try {
-            await removeSetting(index);
+            await removeProvider(index);
           } catch {
-            Alert.alert("错误", "删除设置失败");
+            Alert.alert("错误", "删除供应商失败");
           }
         },
       },
@@ -79,7 +79,7 @@ export default function SettingsSection() {
 
   const handleSetActive = async (index: number) => {
     try {
-      await setActiveSetting(index);
+      await setActiveProvider(index);
     } catch {
       Alert.alert("错误", "设置活跃失败");
     }
@@ -111,23 +111,23 @@ export default function SettingsSection() {
           </Text>
         </View>
 
-        {activeSetting && (
+        {activeProvider && (
           <View style={styles.activeCard}>
             <View style={styles.activeHeader}>
               <Ionicons name="star" size={24} color="#FFD700" />
               <Text style={styles.activeTitle}>当前活跃提供商</Text>
             </View>
-            <Text style={styles.activeName}>{activeSetting.providerName}</Text>
+            <Text style={styles.activeName}>{activeProvider.providerName}</Text>
             <Text style={styles.activeType}>
-              类型: {activeSetting.providerType}
+              类型: {activeProvider.providerType}
             </Text>
             <Text style={styles.activeUrl} numberOfLines={1}>
-              地址: {activeSetting.baseUrl}
+              地址: {activeProvider.baseUrl}
             </Text>
           </View>
         )}
 
-        <View style={styles.settingsList}>
+        <View style={styles.providersList}>
           <View style={styles.listHeader}>
             <Text style={styles.listTitle}>所有提供商</Text>
             <TouchableOpacity style={styles.addButton} onPress={handleAddNew}>
@@ -135,28 +135,28 @@ export default function SettingsSection() {
             </TouchableOpacity>
           </View>
 
-          {settings.length === 0 ? (
+          {providers.length === 0 ? (
             <View style={styles.emptyState}>
               <Ionicons name="settings-outline" size={48} color="#CCCCCC" />
-              <Text style={styles.emptyText}>暂无设置</Text>
+              <Text style={styles.emptyText}>暂无供应商</Text>
               <Text style={styles.emptySubtext}>
-                点击右上角添加按钮创建新设置
+                点击右上角添加按钮创建新供应商
               </Text>
             </View>
           ) : (
-            settings.map((setting, index) => (
-              <View key={index} style={styles.settingCard}>
-                <View style={styles.settingHeader}>
-                  <View style={styles.settingInfo}>
-                    <Text style={styles.settingName}>
-                      {setting.providerName}
+            providers.map((provider, index) => (
+              <View key={index} style={styles.providerCard}>
+                <View style={styles.providerHeader}>
+                  <View style={styles.providerInfo}>
+                    <Text style={styles.providerName}>
+                      {provider.providerName}
                     </Text>
-                    <Text style={styles.settingType}>
-                      {setting.providerType}
+                    <Text style={styles.providerType}>
+                      {provider.providerType}
                     </Text>
                   </View>
-                  <View style={styles.settingActions}>
-                    {setting.isActive ? (
+                  <View style={styles.providerActions}>
+                    {provider.isActive ? (
                       <View style={styles.activeBadge}>
                         <Text style={styles.activeBadgeText}>活跃</Text>
                       </View>
@@ -171,28 +171,28 @@ export default function SettingsSection() {
                   </View>
                 </View>
 
-                <View style={styles.settingDetails}>
-                  <Text style={styles.settingDetail} numberOfLines={1}>
+                <View style={styles.providerDetails}>
+                  <Text style={styles.providerDetail} numberOfLines={1}>
                     <Text style={styles.detailLabel}>API地址: </Text>
-                    {setting.baseUrl}
+                    {provider.baseUrl}
                   </Text>
-                  <Text style={styles.settingDetail} numberOfLines={1}>
+                  <Text style={styles.providerDetail} numberOfLines={1}>
                     <Text style={styles.detailLabel}>API密钥: </Text>
-                    {setting.apiKey ? "••••••••" : "未设置"}
+                    {provider.apiKey ? "••••••••" : "未设置"}
                   </Text>
                 </View>
 
-                <View style={styles.settingFooter}>
+                <View style={styles.providerFooter}>
                   <TouchableOpacity
                     style={styles.actionButton}
-                    onPress={() => handleEditSetting(index)}
+                    onPress={() => handleEditProvider(index)}
                   >
                     <Ionicons name="pencil" size={20} color="#007AFF" />
                     <Text style={styles.actionButtonText}>编辑</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.actionButton}
-                    onPress={() => handleDeleteSetting(index)}
+                    onPress={() => handleDeleteProvider(index)}
                   >
                     <Ionicons name="trash" size={20} color="#FF3B30" />
                     <Text
@@ -207,17 +207,17 @@ export default function SettingsSection() {
           )}
         </View>
 
-        {settings.length > 0 && (
+        {providers.length > 0 && (
           <TouchableOpacity
             style={styles.clearButton}
-            onPress={() => clearSettings()}
+            onPress={() => clearProviders()}
           >
-            <Text style={styles.clearButtonText}>清除所有设置</Text>
+            <Text style={styles.clearButtonText}>清除所有供应商</Text>
           </TouchableOpacity>
         )}
       </ScrollView>
 
-      {/* 添加/编辑设置模态框 */}
+      {/* 添加/编辑供应商模态框 */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -228,7 +228,7 @@ export default function SettingsSection() {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {editingIndex !== null ? "编辑设置" : "添加新设置"}
+                {editingIndex !== null ? "编辑供应商" : "添加新供应商"}
               </Text>
               <TouchableOpacity onPress={() => setModalVisible(false)}>
                 <Ionicons name="close" size={24} color="#000" />
@@ -284,6 +284,8 @@ export default function SettingsSection() {
                   }
                   placeholder="例如: https://api.openai.com/v1"
                   autoCapitalize="none"
+                  spellCheck={false}
+                  autoCorrect={false}
                 />
               </View>
 
@@ -326,7 +328,7 @@ export default function SettingsSection() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.saveButton}
-                onPress={handleSaveSetting}
+                onPress={handleSaveProvider}
               >
                 <Text style={styles.saveButtonText}>保存</Text>
               </TouchableOpacity>
@@ -401,7 +403,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#999",
   },
-  settingsList: {
+  providersList: {
     margin: 20,
     marginTop: 0,
   },
@@ -438,7 +440,7 @@ const styles = StyleSheet.create({
     color: "#ccc",
     textAlign: "center",
   },
-  settingCard: {
+  providerCard: {
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
@@ -449,22 +451,22 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  settingHeader: {
+  providerHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 12,
   },
-  settingInfo: {
+  providerInfo: {
     flex: 1,
   },
-  settingName: {
+  providerName: {
     fontSize: 18,
     fontWeight: "600",
     color: "#333",
     marginBottom: 4,
   },
-  settingType: {
+  providerType: {
     fontSize: 14,
     color: "#666",
     backgroundColor: "#f0f0f0",
@@ -473,7 +475,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     alignSelf: "flex-start",
   },
-  settingActions: {
+  providerActions: {
     marginLeft: 12,
   },
   activeBadge: {
@@ -498,10 +500,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
-  settingDetails: {
+  providerDetails: {
     marginBottom: 12,
   },
-  settingDetail: {
+  providerDetail: {
     fontSize: 14,
     color: "#666",
     marginBottom: 4,
@@ -510,7 +512,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     color: "#333",
   },
-  settingFooter: {
+  providerFooter: {
     flexDirection: "row",
     justifyContent: "flex-end",
     borderTopWidth: 1,
