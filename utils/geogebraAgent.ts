@@ -198,23 +198,84 @@ export async function analyzeImageWithSteps(
 - finalElements: 完成时的元素列表（仅 isComplete=true 时需要）
 - finalSteps: 完成时的步骤总结（仅 isComplete=true 时需要）
 
-## GeoGebra 常用命令（每条命令单独执行）
-- 创建点：A = (0, 0)  或  B = (3, 4)
-- 创建线段：s = Segment(A, B)
-- 创建直线：l = Line(A, B)
-- 创建圆：c = Circle(A, 5)
-- 创建多边形：poly = Polygon(A, B, C, D)
-- 创建交点：E = Intersect(c, l)
-- 创建角度：α = Angle(A, B, C)
+## GeoGebra 完整命令参考
+
+### 点（Point）
+- 自由点：A = (0, 0)  或  B = (3, 4)
+- 线段上的点（可拖动）：E = Point(s)  其中 s 是线段
+- 直线上的点（可拖动）：E = Point(l)  其中 l 是直线
+- 指定位置的点：E = Point(s, 0.5)  参数 0-1 表示在线段上的位置
+- 中点：M = Midpoint(A, B)  或  M = Midpoint(s)
+
+### 线段和直线
+- 线段：s = Segment(A, B)
+- 无限直线：l = Line(A, B)
+- 射线：r = Ray(A, B)
+
+### 垂直线（正确命令）
+- 过点垂直于直线：p = PerpendicularLine(P, l)
+- 过点垂直于线段：p = PerpendicularLine(P, s)
+- 垂足（交点）：F = Intersect(p, s)  或  F = Intersect(p, l)
+
+### 圆
+- 圆心和半径：c = Circle(A, 5)
+- 圆心和过点：c = Circle(A, B)
+- 过三点：c = Circle(A, B, C)
+
+### 多边形
+- 多边形：poly = Polygon(A, B, C, D)
+- 正多边形：poly = Polygon(A, B, 6)  以 AB 为边的六边形
+
+### 交点
+- 两线交点：I = Intersect(l1, l2)
+- 线与圆交点：I = Intersect(l, c)
+- 两圆交点：I = Intersect(c1, c2)
+
+### 角度
+- 角度：α = Angle(A, B, C)  顶点在 B
+- 角度（带方向）：α = Angle(A, B, C, direction)
+
+### 其他常用命令
+- 距离：d = Distance(A, B)
+- 长度：len = Length(s)
+- 面积：area = Area(poly)
+- 斜率：m = Slope(l)
 
 ## 重要提示
 - 每个步骤只能包含一条 GeoGebra 命令
 - 错误示例：A = (0, 0); B = (3, 0); C = (3, 3)  （这是三条命令）
-- 正确示例：A = (0, 0)  （这是单条命令）`
+- 正确示例：A = (0, 0)  （这是单条命令）
+
+## 常见错误纠正
+错误: PointOnSegment(A, C)    正确: Point(Segment(A, C)) 或 Point(s)
+错误: PerpendicularFoot(E, l) 正确: Intersect(PerpendicularLine(E, l), l)
+错误: PointOnLine(E, l)       正确: Point(l)
+
+## 关键规则：引用已创建的对象
+必须记住你创建的对象名称，并在后续命令中正确使用。
+创建了 s = Polygon(A, B, C, D) 后，正方形的边不会自动变成 AB、BC、CD、DA
+如果需要使用线段，必须先显式创建：
+正确: AB = Segment(A, B) 然后 PerpendicularLine(E, AB)
+正确: 或者直接使用 PerpendicularLine(E, Segment(A, B))
+错误: 不要假设 AB 自动存在！AB 是一个变量名，除非你创建了它，否则不存在
+
+## 正确的作图流程示例
+步骤1: A = (0, 4)           // 创建点A
+步骤2: B = (0, 0)           // 创建点B  
+步骤3: C = (4, 0)           // 创建点C
+步骤4: D = (4, 4)           // 创建点D
+步骤5: s = Polygon(A, B, C, D)  // 创建多边形s
+步骤6: AB = Segment(A, B)   // 显式创建线段AB
+步骤7: p = PerpendicularLine(E, AB)  // 正确引用线段AB
+
+## 错误示例（不要这样做）
+步骤5: s = Polygon(A, B, C, D)
+步骤6: p = PerpendicularLine(E, AB)  // 错误！AB不存在！`
 
   // 存储最终结果
   let finalResult: { description: string; elements: unknown[]; suggestedSteps: string[] } | null = null;
   const allSteps: string[] = [];
+  const allCommands: string[] = []; // 存储所有已执行的命令
   let stepCount = 0;
   const maxSteps = 50;
 
@@ -296,6 +357,7 @@ export async function analyzeImageWithSteps(
     // 执行命令
     console.log(`执行步骤 ${stepData.stepNumber}/${stepData.totalSteps}: ${stepData.command}`);
     allSteps.push(`${stepData.stepNumber}. ${stepData.description}: ${stepData.command}`);
+    allCommands.push(stepData.command); // 保存命令用于变量追踪
 
     const executionResult = await onStepExecution({
       stepNumber: stepData.stepNumber,
@@ -311,10 +373,27 @@ export async function analyzeImageWithSteps(
       content: [{ type: "text" as const, text: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n请继续下一步，以 JSON 格式返回。` }],
     });
 
+    // 构建当前消息，包含已创建的对象列表
+    const currentMessages = [...messages];
+    if (allCommands.length > 0) {
+      // 提取所有已定义的变量名
+      const definedVariables = allCommands
+        .map(cmd => {
+          const match = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+          return match ? match[1] : null;
+        })
+        .filter(Boolean);
+      
+      currentMessages.push({
+        role: "user" as const,
+        content: [{ type: "text" as const, text: `[提醒]已创建的对象：${definedVariables.join(", ")}。请确保只引用这些已定义的对象，不要引用不存在的变量。` }],
+      });
+    }
+
     // 调用模型获取下一步
     const result = await generateText({
       model: client(modelName),
-      messages,
+      messages: currentMessages,
     });
 
     // 解析模型响应
@@ -387,19 +466,79 @@ export async function generateFromDescriptionWithSteps(
 - finalElements: 完成时的元素列表（仅 isComplete=true 时需要）
 - finalSteps: 完成时的步骤总结（仅 isComplete=true 时需要）
 
-## GeoGebra 常用命令（每条命令单独执行）
-- 创建点：A = (0, 0)  或  B = (3, 4)
-- 创建线段：s = Segment(A, B)
-- 创建直线：l = Line(A, B)
-- 创建圆：c = Circle(A, 5)
-- 创建多边形：poly = Polygon(A, B, C, D)
-- 创建交点：E = Intersect(c, l)
-- 创建角度：α = Angle(A, B, C)
+## GeoGebra 完整命令参考
+
+### 点（Point）
+- 自由点：A = (0, 0)  或  B = (3, 4)
+- 线段上的点（可拖动）：E = Point(s)  其中 s 是线段
+- 直线上的点（可拖动）：E = Point(l)  其中 l 是直线
+- 指定位置的点：E = Point(s, 0.5)  参数 0-1 表示在线段上的位置
+- 中点：M = Midpoint(A, B)  或  M = Midpoint(s)
+
+### 线段和直线
+- 线段：s = Segment(A, B)
+- 无限直线：l = Line(A, B)
+- 射线：r = Ray(A, B)
+
+### 垂直线（正确命令）
+- 过点垂直于直线：p = PerpendicularLine(P, l)
+- 过点垂直于线段：p = PerpendicularLine(P, s)
+- 垂足（交点）：F = Intersect(p, s)  或  F = Intersect(p, l)
+
+### 圆
+- 圆心和半径：c = Circle(A, 5)
+- 圆心和过点：c = Circle(A, B)
+- 过三点：c = Circle(A, B, C)
+
+### 多边形
+- 多边形：poly = Polygon(A, B, C, D)
+- 正多边形：poly = Polygon(A, B, 6)  以 AB 为边的六边形
+
+### 交点
+- 两线交点：I = Intersect(l1, l2)
+- 线与圆交点：I = Intersect(l, c)
+- 两圆交点：I = Intersect(c1, c2)
+
+### 角度
+- 角度：α = Angle(A, B, C)  顶点在 B
+- 角度（带方向）：α = Angle(A, B, C, direction)
+
+### 其他常用命令
+- 距离：d = Distance(A, B)
+- 长度：len = Length(s)
+- 面积：area = Area(poly)
+- 斜率：m = Slope(l)
 
 ## 重要提示
 - 每个步骤只能包含一条 GeoGebra 命令
 - 错误示例：A = (0, 0); B = (3, 0); C = (3, 3)  （这是三条命令）
-- 正确示例：A = (0, 0)  （这是单条命令）`;
+- 正确示例：A = (0, 0)  （这是单条命令）
+
+## 常见错误纠正
+错误: PointOnSegment(A, C)    正确: Point(Segment(A, C)) 或 Point(s)
+错误: PerpendicularFoot(E, l) 正确: Intersect(PerpendicularLine(E, l), l)
+错误: PointOnLine(E, l)       正确: Point(l)
+
+## 关键规则：引用已创建的对象
+必须记住你创建的对象名称，并在后续命令中正确使用。
+创建了 s = Polygon(A, B, C, D) 后，正方形的边不会自动变成 AB、BC、CD、DA
+如果需要使用线段，必须先显式创建：
+正确: AB = Segment(A, B) 然后 PerpendicularLine(E, AB)
+正确: 或者直接使用 PerpendicularLine(E, Segment(A, B))
+错误: 不要假设 AB 自动存在！AB 是一个变量名，除非你创建了它，否则不存在
+
+## 正确的作图流程示例
+步骤1: A = (0, 4)           // 创建点A
+步骤2: B = (0, 0)           // 创建点B  
+步骤3: C = (4, 0)           // 创建点C
+步骤4: D = (4, 4)           // 创建点D
+步骤5: s = Polygon(A, B, C, D)  // 创建多边形s
+步骤6: AB = Segment(A, B)   // 显式创建线段AB
+步骤7: p = PerpendicularLine(E, AB)  // 正确引用线段AB
+
+## 错误示例（不要这样做）
+步骤5: s = Polygon(A, B, C, D)
+步骤6: p = PerpendicularLine(E, AB)  // 错误！AB不存在！`;
 
   // 初始化消息历史
   type Message = 
@@ -409,12 +548,13 @@ export async function generateFromDescriptionWithSteps(
   
   const messages: Message[] = [
     { role: "system", content: systemPrompt },
-    { role: "user", content: `请根据以下描述绘制几何图形，分步执行：\n\n${description}` },
+    { role: "user", content: "请根据以下描述绘制几何图形，分步执行：\n\n" + description },
   ];
 
   // 存储最终结果
   let finalResult: { description: string; elements: unknown[]; suggestedSteps: string[] } | null = null;
   const allSteps: string[] = [];
+  const allCommands: string[] = []; // 存储所有已执行的命令
   let stepCount = 0;
   const maxSteps = 50;
 
@@ -423,10 +563,27 @@ export async function generateFromDescriptionWithSteps(
     stepCount++;
     console.log(`\n=== 开始第 ${stepCount} 步 ===`);
 
+    // 构建当前消息，包含已创建的对象列表
+    const currentMessages = [...messages];
+    if (allCommands.length > 0) {
+      // 提取所有已定义的变量名
+      const definedVariables = allCommands
+        .map(cmd => {
+          const match = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+          return match ? match[1] : null;
+        })
+        .filter(Boolean);
+      
+      currentMessages.push({
+        role: "user" as const,
+        content: `[提醒]已创建的对象：${definedVariables.join(", ")}。请确保只引用这些已定义的对象，不要引用不存在的变量。`,
+      });
+    }
+
     // 调用模型获取下一步
     const result = await generateText({
       model: client(modelName),
-      messages,
+      messages: currentMessages,
     });
 
     // 解析模型响应
