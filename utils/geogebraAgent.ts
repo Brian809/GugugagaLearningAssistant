@@ -1,6 +1,7 @@
 import { generateText, tool } from "ai";
 import { z } from "zod";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { LLMProvider, SUPPORTED_MODELS } from "./llmProviders";
 
 // 为了保持向后兼容，保留旧版本的类型定义
@@ -45,8 +46,19 @@ function getModelName(provider: LLMProvider, requireMultimodal: boolean = false)
 
 /**
  * 创建 AI 客户端
+ * 
+ * 对于 OpenRouter，使用专用的 @openrouter/ai-sdk-provider 以获得更好的兼容性
+ * 对于其他提供商，使用通用的 @ai-sdk/openai
  */
 function createAIClient(provider: LLMProvider) {
+  const isOpenRouter = provider.baseUrl.includes("openrouter.ai");
+  
+  if (isOpenRouter) {
+    return createOpenRouter({
+      apiKey: provider.apiKey,
+    });
+  }
+  
   return createOpenAI({
     baseURL: provider.baseUrl,
     apiKey: provider.apiKey,
@@ -86,6 +98,8 @@ export async function imageToBase64(uri: string): Promise<string> {
 
 /**
  * 生成单步注入脚本
+ * 
+ * 支持多命令（用分号或换行分隔），每个命令单独执行
  */
 export function generateSingleStepScript(command: string): string {
   // 清理命令
@@ -94,17 +108,33 @@ export function generateSingleStepScript(command: string): string {
     cleanCommand = cleanCommand.substring(1).trim();
   }
 
-  // 转义双引号和反斜杠
-  const escapedCommand = cleanCommand
-    .replace(/\\/g, "\\\\")  // 先转义反斜杠
-    .replace(/"/g, '\\"');    // 再转义双引号
+  // 将多命令分割成数组（支持分号和换行分隔）
+  const commands = cleanCommand
+    .split(/[;\n]/)
+    .map(cmd => cmd.trim())
+    .filter(cmd => cmd.length > 0);
 
-  // 生成自执行函数脚本，确保在 WebView 中正确执行
+  // 如果没有命令，返回空脚本
+  if (commands.length === 0) {
+    return "(function() { return false; })();";
+  }
+
+  // 转义每个命令
+  const escapedCommands = commands.map(cmd => 
+    cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+  );
+
+  // 生成多命令执行脚本
+  const commandCalls = escapedCommands
+    .map(cmd => `      ggbApplet.evalCommand("${cmd}");`)
+    .join("\n");
+
+  // 生成自执行函数脚本
   return `
 (function() {
   try {
     if (typeof ggbApplet !== 'undefined' && ggbApplet.evalCommand) {
-      ggbApplet.evalCommand("${escapedCommand}");
+${commandCalls}
       ggbApplet.refreshViews();
       return true;
     } else {
@@ -154,13 +184,13 @@ export async function analyzeImageWithSteps(
 - 从基础元素开始：先创建点（如 A = (0, 0)）
 - 逐步构建：点 → 线 → 圆 → 多边形
 - 依赖关系：确保引用已创建的元素
-- 一次一条：禁止一次返回多条命令
+- 一次一条：禁止一次返回多条命令（不要用分号分隔）
 
 ## 响应格式
 你必须以 JSON 格式响应，包含以下字段：
 - stepNumber: 当前步骤序号
 - totalSteps: 预计总步骤数
-- command: GeoGebra 命令（仅一条）
+- command: GeoGebra 命令（仅一条，不要用分号分隔多条命令）
 - description: 命令说明
 - expectedResult: 预期结果
 - isComplete: 是否完成（true/false）
@@ -168,14 +198,19 @@ export async function analyzeImageWithSteps(
 - finalElements: 完成时的元素列表（仅 isComplete=true 时需要）
 - finalSteps: 完成时的步骤总结（仅 isComplete=true 时需要）
 
-## GeoGebra 常用命令
-- 点：A = (0, 0)
-- 线段：s = Segment(A, B)
-- 直线：l = Line(A, B)
-- 圆：c = Circle(A, 5)
-- 多边形：p = Polygon(A, B, C)
-- 交点：D = Intersect(c, l)
-- 角度：α = Angle(A, B, C)`;
+## GeoGebra 常用命令（每条命令单独执行）
+- 创建点：A = (0, 0)  或  B = (3, 4)
+- 创建线段：s = Segment(A, B)
+- 创建直线：l = Line(A, B)
+- 创建圆：c = Circle(A, 5)
+- 创建多边形：poly = Polygon(A, B, C, D)
+- 创建交点：E = Intersect(c, l)
+- 创建角度：α = Angle(A, B, C)
+
+## 重要提示
+- 每个步骤只能包含一条 GeoGebra 命令
+- 错误示例：A = (0, 0); B = (3, 0); C = (3, 3)  （这是三条命令）
+- 正确示例：A = (0, 0)  （这是单条命令）`
 
   // 存储最终结果
   let finalResult: { description: string; elements: unknown[]; suggestedSteps: string[] } | null = null;
@@ -186,14 +221,12 @@ export async function analyzeImageWithSteps(
   // 第一轮：发送图片 + 获取分析
   console.log("\n=== 第 1 步：分析图片 ===");
   
-  // AI SDK 期望的是纯 base64 字符串，不需要 data URL 前缀
-  // 参考: https://sdk.vercel.ai/docs/reference/ai-sdk-core/generate-text#image-parts
   const firstResult = await generateText({
     model: client(modelName),
     messages: [
       { role: "system", content: systemPrompt },
-      { 
-        role: "user", 
+      {
+        role: "user",
         content: [
           { type: "text", text: userMessageContent },
           { 
@@ -201,7 +234,7 @@ export async function analyzeImageWithSteps(
             image: base64Image,
             mediaType: mimeType,
           },
-        ] 
+        ],
       },
     ],
   });
@@ -231,11 +264,18 @@ export async function analyzeImageWithSteps(
     throw new Error("模型未返回有效的 JSON 格式");
   }
 
-  // 初始化文本对话历史（从第二轮开始不再发送图片）
-  const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: `[图片] ${userMessageContent}` },
-    { role: "assistant", content: firstResult.text },
+  // 初始化消息历史，保持一致性
+  // 包含：system + 带图片的 user 消息 + assistant 回复
+  const messages = [
+    { role: "system" as const, content: systemPrompt },
+    { 
+      role: "user" as const, 
+      content: [
+        { type: "text" as const, text: userMessageContent },
+        { type: "image" as const, image: base64Image, mediaType: mimeType },
+      ],
+    },
+    { role: "assistant" as const, content: firstResult.text },
   ];
 
   // 手动循环执行
@@ -267,8 +307,8 @@ export async function analyzeImageWithSteps(
 
     // 将执行结果添加到消息历史
     messages.push({
-      role: "user",
-      content: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n请继续下一步，以 JSON 格式返回。`,
+      role: "user" as const,
+      content: [{ type: "text" as const, text: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n请继续下一步，以 JSON 格式返回。` }],
     });
 
     // 调用模型获取下一步
@@ -288,14 +328,14 @@ export async function analyzeImageWithSteps(
     } catch {
       console.error("解析响应失败:", result.text);
       // 如果解析失败，提示模型重新返回
-      messages.push({ role: "assistant", content: result.text });
-      messages.push({ role: "user", content: "请以上述 JSON 格式返回下一步命令。" });
+      messages.push({ role: "assistant" as const, content: result.text });
+      messages.push({ role: "user" as const, content: [{ type: "text" as const, text: "请以上述 JSON 格式返回下一步命令。" }] });
       continue;
     }
 
     // 将模型响应添加到消息历史
     messages.push({
-      role: "assistant",
+      role: "assistant" as const,
       content: result.text,
     });
   }
@@ -333,13 +373,13 @@ export async function generateFromDescriptionWithSteps(
 - 从基础元素开始：先创建点（如 A = (0, 0)）
 - 逐步构建：点 → 线 → 圆 → 多边形
 - 依赖关系：确保引用已创建的元素
-- 一次一条：禁止一次返回多条命令
+- 一次一条：禁止一次返回多条命令（不要用分号分隔）
 
 ## 响应格式
 你必须以 JSON 格式响应，包含以下字段：
 - stepNumber: 当前步骤序号
 - totalSteps: 预计总步骤数
-- command: GeoGebra 命令（仅一条）
+- command: GeoGebra 命令（仅一条，不要用分号分隔多条命令）
 - description: 命令说明
 - expectedResult: 预期结果
 - isComplete: 是否完成（true/false）
@@ -347,17 +387,27 @@ export async function generateFromDescriptionWithSteps(
 - finalElements: 完成时的元素列表（仅 isComplete=true 时需要）
 - finalSteps: 完成时的步骤总结（仅 isComplete=true 时需要）
 
-## GeoGebra 常用命令
-- 点：A = (0, 0)
-- 线段：s = Segment(A, B)
-- 直线：l = Line(A, B)
-- 圆：c = Circle(A, 5)
-- 多边形：p = Polygon(A, B, C)
-- 交点：D = Intersect(c, l)
-- 角度：α = Angle(A, B, C)`;
+## GeoGebra 常用命令（每条命令单独执行）
+- 创建点：A = (0, 0)  或  B = (3, 4)
+- 创建线段：s = Segment(A, B)
+- 创建直线：l = Line(A, B)
+- 创建圆：c = Circle(A, 5)
+- 创建多边形：poly = Polygon(A, B, C, D)
+- 创建交点：E = Intersect(c, l)
+- 创建角度：α = Angle(A, B, C)
+
+## 重要提示
+- 每个步骤只能包含一条 GeoGebra 命令
+- 错误示例：A = (0, 0); B = (3, 0); C = (3, 3)  （这是三条命令）
+- 正确示例：A = (0, 0)  （这是单条命令）`;
 
   // 初始化消息历史
-  const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+  type Message = 
+    | { role: "system"; content: string }
+    | { role: "user"; content: string | Array<{ type: "text"; text: string } | { type: "image"; image: string; mediaType: string }> }
+    | { role: "assistant"; content: string };
+  
+  const messages: Message[] = [
     { role: "system", content: systemPrompt },
     { role: "user", content: `请根据以下描述绘制几何图形，分步执行：\n\n${description}` },
   ];
@@ -393,7 +443,6 @@ export async function generateFromDescriptionWithSteps(
     };
 
     try {
-      // 尝试从响应中提取 JSON
       const jsonMatch = result.text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         stepData = JSON.parse(jsonMatch[0]);
@@ -402,8 +451,8 @@ export async function generateFromDescriptionWithSteps(
       }
     } catch {
       console.error("解析响应失败:", result.text);
-      messages.push({ role: "assistant", content: result.text });
-      messages.push({ role: "user", content: "请以上述 JSON 格式返回下一步命令。" });
+      messages.push({ role: "assistant" as const, content: result.text });
+      messages.push({ role: "user" as const, content: "请以上述 JSON 格式返回下一步命令。" });
       continue;
     }
 
@@ -429,15 +478,16 @@ export async function generateFromDescriptionWithSteps(
       expectedResult: stepData.expectedResult,
     });
 
-    // 将结果添加到消息历史
+    // 将执行结果添加到消息历史
     messages.push({
-      role: "assistant",
-      content: JSON.stringify(stepData, null, 2),
+      role: "user" as const,
+      content: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n请继续下一步，以 JSON 格式返回。`,
     });
 
+    // 将模型响应添加到消息历史
     messages.push({
-      role: "user",
-      content: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n请继续下一步，以 JSON 格式返回。`,
+      role: "assistant" as const,
+      content: result.text,
     });
   }
 
@@ -539,7 +589,7 @@ export async function analyzeImageForGeoGebra(
         role: "user",
         content: [
           { type: "text", text: userMessage },
-          { type: "image", image: `data:${mimeType};base64,${base64Image}` },
+          { type: "image", image: base64Image, mediaType: mimeType },
         ],
       },
     ],
@@ -547,8 +597,7 @@ export async function analyzeImageForGeoGebra(
 
   const toolCall = result.toolCalls?.[0];
   if (toolCall?.toolName === "analyzeGeometry") {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const args = (toolCall as any).args as GeoGebraAnalysis;
+    const args = (toolCall as unknown as { args: GeoGebraAnalysis }).args;
     return args;
   }
 
@@ -586,8 +635,7 @@ export async function generateGeoGebraFromDescription(
 
   const toolCall = result.toolCalls?.[0];
   if (toolCall?.toolName === "analyzeGeometry") {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const args = (toolCall as any).args as GeoGebraAnalysis;
+    const args = (toolCall as unknown as { args: GeoGebraAnalysis }).args;
     return args;
   }
 

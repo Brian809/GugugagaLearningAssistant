@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -24,8 +24,19 @@ import {
 } from "../../utils/geogebraAgent";
 import { useActiveLLMProvider, useLLMProviderStore } from "../../stores/llmProviderStore";
 
-// GeoGebra 嵌入 URL
+// 全局类型声明
+declare global {
+  interface Window {
+    GGBApplet: any;
+    ggbApplet: any;
+  }
+}
+
+// GeoGebra 嵌入 URL - 使用 API 版本以获得更好的控制
 const GEOGEBRA_URL = "https://www.geogebra.org/classic#geometry";
+
+// GeoGebra API 脚本 URL
+const GEOGEBRA_API_SCRIPT = "https://www.geogebra.org/apps/deployggb.js";
 
 // 动态导入 WebView（只在移动端使用）
 let WebView: any = null;
@@ -71,8 +82,10 @@ function ToolButton({
 // AI 对话框组件
 function AIChatPanel({
   webViewRef,
+  onExecuteCommand,
 }: {
   webViewRef: React.RefObject<any>;
+  onExecuteCommand?: (script: string) => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -158,19 +171,13 @@ function AIChatPanel({
       // 1. 生成注入脚本
       const script = generateSingleStepScript(step.command);
 
-      // 2. 注入到 WebView 执行
-      if (webViewRef.current) {
-        if (Platform.OS === "web") {
-          // Web 端通过 postMessage
-          const iframe = document.querySelector("iframe");
-          iframe?.contentWindow?.postMessage(
-            { type: "evalCommand", script },
-            "*"
-          );
-        } else {
-          // 移动端通过 injectJavaScript
-          webViewRef.current.injectJavaScript(script);
-        }
+      // 2. 注入到 WebView/iframe 执行
+      if (Platform.OS === "web" && onExecuteCommand) {
+        // Web 端通过回调函数
+        onExecuteCommand(script);
+      } else if (webViewRef.current) {
+        // 移动端通过 injectJavaScript
+        webViewRef.current.injectJavaScript(script);
       }
 
       // 3. 添加步骤消息到聊天界面
@@ -197,7 +204,7 @@ function AIChatPanel({
       console.error("步骤执行错误:", errorMessage);
       return { success: false, error: errorMessage };
     }
-  }, [webViewRef, addMessage]);
+  }, [webViewRef, onExecuteCommand, addMessage]);
 
   // 处理发送消息
   const handleSend = async () => {
@@ -396,43 +403,212 @@ function AIChatPanel({
   );
 }
 
-// Web 端使用的 iframe 组件
+// 全局存储 GeoGebra applet 实例和待执行命令队列
+let ggbAppletInstance: any = null;
+let pendingCommands: string[] = [];
+
+// Web 端使用的 GeoGebra 组件 - 使用官方 API
 function GeoGebraWebView({
   injectScript,
 }: {
   injectScript?: string;
 }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const appletRef = useRef<any>(null);
+  const [isReady, setIsReady] = useState(false);
 
-  // 当脚本变化时注入
+  // 初始化 GeoGebra applet
   React.useEffect(() => {
-    if (injectScript && iframeRef.current) {
-      const iframe = iframeRef.current;
-      const handleLoad = () => {
-        try {
-          iframe.contentWindow?.postMessage(
-            { type: "evalCommand", script: injectScript },
-            "*"
-          );
-        } catch (e) {
-          console.error("Failed to inject script:", e);
+    if (Platform.OS !== "web" || !containerRef.current) return;
+
+    // 等待容器有尺寸
+    const container = containerRef.current;
+    if (container.clientWidth === 0 || container.clientHeight === 0) {
+      // 如果尺寸为0，等待一下再试
+      const checkSize = setInterval(() => {
+        if (container.clientWidth > 0 && container.clientHeight > 0) {
+          clearInterval(checkSize);
+          loadGGBApplet();
         }
+      }, 100);
+      
+      // 5秒后超时
+      setTimeout(() => clearInterval(checkSize), 5000);
+      return;
+    }
+
+    loadGGBApplet();
+
+    function loadGGBApplet() {
+      if (window.GGBApplet) {
+        initApplet();
+      } else {
+        const script = document.createElement("script");
+        script.src = GEOGEBRA_API_SCRIPT;
+        script.onload = initApplet;
+        script.onerror = () => console.error("Failed to load GeoGebra API");
+        document.head.appendChild(script);
+      }
+    }
+
+    function initApplet() {
+      if (!containerRef.current || !window.GGBApplet) return;
+
+      const width = containerRef.current.clientWidth || 800;
+      const height = containerRef.current.clientHeight || 600;
+
+      console.log("Initializing GeoGebra with size:", width, height);
+
+      // 创建一个子容器给 GeoGebra 使用，避免 React 和 GeoGebra 冲突
+      const ggbContainerId = "ggb-container-" + Date.now();
+      const ggbContainer = document.createElement("div");
+      ggbContainer.id = ggbContainerId;
+      ggbContainer.style.width = "100%";
+      ggbContainer.style.height = "100%";
+      
+      // 将子容器添加到 React 管理的容器中
+      containerRef.current.appendChild(ggbContainer);
+
+      // 创建 applet 参数
+      const parameters = {
+        id: "ggbApplet",
+        width: width,
+        height: height,
+        showToolBar: true,
+        borderColor: "#FFFFFF",
+        showMenuBar: false,
+        showAlgebraInput: true,
+        showResetIcon: false,
+        enableLabelDrags: true,
+        enableShiftDragZoom: true,
+        enableRightClick: false,
+        capturingThreshold: 3,
+        showAxes: true,
+        showGrid: true,
+        useBrowserForJS: false,
+        perspective: "G",
       };
-      iframe.addEventListener("load", handleLoad);
-      return () => iframe.removeEventListener("load", handleLoad);
+
+      // 创建 applet 实例并注入到子容器
+      const applet = new window.GGBApplet(parameters, "5.0");
+      applet.inject(ggbContainerId);
+      appletRef.current = applet;
+
+      // 等待 applet 准备好
+      let checkCount = 0;
+      const checkAppletReady = setInterval(() => {
+        checkCount++;
+        const ggb = window.ggbApplet;
+        
+        // 尝试从子容器中获取 applet
+        if (!ggb && ggbContainer) {
+          const appletElem = ggbContainer.querySelector("#ggbApplet");
+          if (appletElem && (appletElem as any).evalCommand) {
+            (window as any).ggbApplet = appletElem;
+          }
+        }
+        
+        if (ggb && typeof ggb.evalCommand === "function") {
+          clearInterval(checkAppletReady);
+          ggbAppletInstance = ggb;
+          setIsReady(true);
+          console.log("GeoGebra applet ready after", checkCount, "checks");
+          
+          // 执行待处理的命令
+          while (pendingCommands.length > 0) {
+            const cmd = pendingCommands.shift();
+            if (cmd) executeCommand(cmd);
+          }
+        }
+        
+        // 60秒后放弃
+        if (checkCount > 120) {
+          clearInterval(checkAppletReady);
+          console.error("GeoGebra applet failed to load after 60 seconds");
+        }
+      }, 500);
+
+      return () => clearInterval(checkAppletReady);
+    }
+  }, []);
+
+  // 处理注入脚本
+  React.useEffect(() => {
+    if (!injectScript) return;
+
+    // 从脚本中提取命令
+    const commandMatch = injectScript.match(/ggbApplet\.evalCommand\("(.+?)"\)/);
+    if (commandMatch && commandMatch[1]) {
+      const command = commandMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+      
+      if (ggbAppletInstance && ggbAppletInstance.evalCommand) {
+        executeCommand(command);
+      } else {
+        pendingCommands.push(command);
+      }
     }
   }, [injectScript]);
 
+  const executeCommand = (command: string) => {
+    try {
+      if (ggbAppletInstance && ggbAppletInstance.evalCommand) {
+        ggbAppletInstance.evalCommand(command);
+        ggbAppletInstance.refreshViews();
+        console.log("Executed command:", command);
+      }
+    } catch (e) {
+      console.error("Failed to execute command:", e);
+    }
+  };
+
   return (
     <View style={styles.webviewContainer}>
-      {/* @ts-ignore - iframe 在 web 平台可用 */}
-      <iframe
-        ref={iframeRef}
-        src={GEOGEBRA_URL}
-        style={styles.iframe}
-        allow="fullscreen"
-        sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-      />
+      {/* 加载动画样式 */}
+      <style>{`
+        @keyframes ggb-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
+      {/* @ts-ignore - div 在 web 平台可用 */}
+      <div 
+        ref={containerRef} 
+        style={{ 
+          width: "100%", 
+          height: "100%", 
+          position: "relative",
+          minHeight: "400px",
+          overflow: "hidden",
+        }} 
+      >
+        {!isReady && (
+          <div style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "#f5f5f5",
+            zIndex: 10,
+          }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ 
+                width: 40, 
+                height: 40, 
+                border: "4px solid #e5e5ea", 
+                borderTop: "4px solid #007AFF",
+                borderRadius: "50%",
+                animation: "ggb-spin 1s linear infinite",
+                margin: "0 auto 10px",
+              }} />
+              <span style={{ color: "#666", fontSize: 14 }}>加载 GeoGebra...</span>
+            </div>
+          </div>
+        )}
+      </div>
     </View>
   );
 }
@@ -440,8 +616,10 @@ function GeoGebraWebView({
 // GeoGebra 画板组件
 function GeoGebraPanel({
   webViewRef,
+  injectScript,
 }: {
   webViewRef: React.RefObject<any>;
+  injectScript?: string;
 }) {
   return (
     <View style={styles.geogebraContainer}>
@@ -450,7 +628,7 @@ function GeoGebraPanel({
         <Text style={styles.geogebraTitle}>GeoGebra 画板</Text>
       </View>
       {Platform.OS === "web" ? (
-        <GeoGebraWebView />
+        <GeoGebraWebView injectScript={injectScript} />
       ) : (
         WebView && (
           <WebView
@@ -474,6 +652,14 @@ export default function GeoGebraScreen() {
   const isLandscape = width > height;
   const isLargeScreen = width >= 768;
   const webViewRef = useRef<any>(null);
+  
+  // 管理要注入 GeoGebra 的脚本
+  const [injectScript, setInjectScript] = useState<string | undefined>(undefined);
+
+  // 处理命令执行
+  const handleExecuteCommand = useCallback((script: string) => {
+    setInjectScript(script);
+  }, []);
 
   // 大屏幕使用左右布局，小屏幕使用上下布局
   if (isLargeScreen || isLandscape) {
@@ -485,10 +671,16 @@ export default function GeoGebraScreen() {
         >
           <View style={styles.horizontalContainer}>
             <View style={[styles.leftPanel, { width: width * 0.35 }]}>
-              <AIChatPanel webViewRef={webViewRef} />
+              <AIChatPanel 
+                webViewRef={webViewRef} 
+                onExecuteCommand={handleExecuteCommand}
+              />
             </View>
             <View style={[styles.rightPanel, { width: width * 0.65 }]}>
-              <GeoGebraPanel webViewRef={webViewRef} />
+              <GeoGebraPanel 
+                webViewRef={webViewRef} 
+                injectScript={injectScript}
+              />
             </View>
           </View>
         </KeyboardAvoidingView>
@@ -505,10 +697,16 @@ export default function GeoGebraScreen() {
       >
         <View style={styles.verticalContainer}>
           <View style={styles.topPanel}>
-            <GeoGebraPanel webViewRef={webViewRef} />
+            <GeoGebraPanel 
+              webViewRef={webViewRef} 
+              injectScript={injectScript}
+            />
           </View>
           <View style={styles.bottomPanel}>
-            <AIChatPanel webViewRef={webViewRef} />
+            <AIChatPanel 
+              webViewRef={webViewRef}
+              onExecuteCommand={handleExecuteCommand}
+            />
           </View>
         </View>
       </KeyboardAvoidingView>
