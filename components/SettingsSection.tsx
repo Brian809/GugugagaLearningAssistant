@@ -9,10 +9,97 @@ import {
   TextInput,
   Modal,
   Switch,
+  ActivityIndicator,
 } from "react-native";
 import { useLLMProviderStore } from "../stores/llmProviderStore";
 import { LLMProvider } from "../utils/llmProviders";
+import { fetchModelsFromProvider, FetchedModel, ModelFetchResult } from "../utils/modelFetcher";
 import { Ionicons } from "@expo/vector-icons";
+
+// 热门提供商预设
+interface PresetProvider {
+  id: string;
+  name: string;
+  providerType: LLMProvider["providerType"];
+  baseUrl: string;
+  icon: string;
+  description: string;
+}
+
+const PRESET_PROVIDERS: PresetProvider[] = [
+  {
+    id: "openai",
+    name: "OpenAI",
+    providerType: "openAiCompatible",
+    baseUrl: "https://api.openai.com/v1",
+    icon: "logo-openai",
+    description: "OpenAI 官方 API",
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic Claude",
+    providerType: "anthropicCompatible",
+    baseUrl: "https://api.anthropic.com/v1",
+    icon: "sparkles",
+    description: "Anthropic Claude 官方 API",
+  },
+  {
+    id: "google",
+    name: "Google Gemini",
+    providerType: "googleCompatible",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    icon: "globe",
+    description: "Google Gemini API",
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    providerType: "openAiCompatible",
+    baseUrl: "https://openrouter.ai/api/v1",
+    icon: "git-network",
+    description: "聚合多个模型提供商",
+  },
+  {
+    id: "aliyun",
+    name: "阿里云百炼",
+    providerType: "openAiCompatible",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    icon: "cloud",
+    description: "阿里云大模型服务平台",
+  },
+  {
+    id: "moonshot",
+    name: "Moonshot (Kimi)",
+    providerType: "openAiCompatible",
+    baseUrl: "https://api.moonshot.cn/v1",
+    icon: "moon",
+    description: "月之暗面 Kimi API",
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    providerType: "openAiCompatible",
+    baseUrl: "https://api.deepseek.com/v1",
+    icon: "code-slash",
+    description: "DeepSeek 大模型",
+  },
+  {
+    id: "siliconflow",
+    name: "硅基流动",
+    providerType: "openAiCompatible",
+    baseUrl: "https://api.siliconflow.cn/v1",
+    icon: "flash",
+    description: "SiliconFlow 大模型平台",
+  },
+  {
+    id: "custom",
+    name: "自定义",
+    providerType: "openAiCompatible",
+    baseUrl: "",
+    icon: "cog",
+    description: "自定义 API 地址",
+  },
+];
 
 export default function SettingsSection() {
   const { providers, activeProvider } = useLLMProviderStore();
@@ -25,17 +112,52 @@ export default function SettingsSection() {
 
   const [modalVisible, setModalVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [selectedPreset, setSelectedPreset] = useState<string>("");
+  const [showPresetSelector, setShowPresetSelector] = useState(true);
   const [formData, setFormData] = useState<Partial<LLMProvider>>({
     apiKey: "",
     baseUrl: "",
     providerName: "",
     providerType: "openAiCompatible",
+    modelName: "",
     isActive: false,
   });
+
+  // 动态获取模型列表的状态
+  const [fetchedModels, setFetchedModels] = useState<ModelFetchResult>({
+    recommended: [],
+    others: [],
+  });
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [showAllModels, setShowAllModels] = useState(false);
 
   useEffect(() => {
     loadProviders();
   }, [loadProviders]);
+
+  // 当 baseUrl 或 apiKey 变化时，尝试获取模型列表
+  useEffect(() => {
+    const fetchModels = async () => {
+      if (formData.baseUrl && formData.apiKey && formData.providerType) {
+        setIsLoadingModels(true);
+        try {
+          const result = await fetchModelsFromProvider(formData as LLMProvider);
+          setFetchedModels(result);
+          if (result.error) {
+            console.warn("获取模型列表失败:", result.error);
+          }
+        } catch (error) {
+          console.error("获取模型列表失败:", error);
+        } finally {
+          setIsLoadingModels(false);
+        }
+      }
+    };
+
+    // 防抖
+    const timer = setTimeout(fetchModels, 500);
+    return () => clearTimeout(timer);
+  }, [formData.baseUrl, formData.apiKey, formData.providerType]);
 
   const handleSaveProvider = async () => {
     try {
@@ -57,6 +179,7 @@ export default function SettingsSection() {
     const provider = providers[index];
     setFormData({ ...provider });
     setEditingIndex(index);
+    setShowPresetSelector(false);
     setModalVisible(true);
   };
 
@@ -91,15 +214,59 @@ export default function SettingsSection() {
       baseUrl: "",
       providerName: "",
       providerType: "openAiCompatible",
+      modelName: "",
       isActive: false,
     });
     setEditingIndex(null);
+    setSelectedPreset("");
+    setShowPresetSelector(true);
   };
 
   const handleAddNew = () => {
     resetForm();
     setModalVisible(true);
   };
+
+  // 选择预设提供商
+  const handleSelectPreset = (preset: PresetProvider) => {
+    setSelectedPreset(preset.id);
+    setFormData({
+      ...formData,
+      providerName: preset.name,
+      providerType: preset.providerType,
+      baseUrl: preset.baseUrl,
+    });
+    setShowPresetSelector(false);
+  };
+
+  // 渲染模型选项
+  const renderModelOption = (model: FetchedModel) => (
+    <TouchableOpacity
+      key={model.id}
+      style={[
+        styles.modelOption,
+        formData.modelName === model.id && styles.modelOptionSelected,
+      ]}
+      onPress={() =>
+        setFormData({ ...formData, modelName: model.id })
+      }
+    >
+      <Text
+        style={[
+          styles.modelName,
+          formData.modelName === model.id && styles.modelNameSelected,
+        ]}
+        numberOfLines={1}
+      >
+        {model.name}
+      </Text>
+      {model.multimodal && (
+        <View style={styles.multimodalBadge}>
+          <Text style={styles.multimodalText}>多模态</Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
 
   return (
     <View style={styles.container}>
@@ -236,6 +403,43 @@ export default function SettingsSection() {
             </View>
 
             <ScrollView style={styles.form}>
+              {/* 热门提供商选择 - 仅在添加新提供商时显示 */}
+              {editingIndex === null && showPresetSelector && (
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>选择热门提供商</Text>
+                  <View style={styles.presetGrid}>
+                    {PRESET_PROVIDERS.map((preset) => (
+                      <TouchableOpacity
+                        key={preset.id}
+                        style={[
+                          styles.presetCard,
+                          selectedPreset === preset.id && styles.presetCardSelected,
+                        ]}
+                        onPress={() => handleSelectPreset(preset)}
+                      >
+                        <Ionicons
+                          name={preset.icon as any}
+                          size={24}
+                          color={selectedPreset === preset.id ? "#007AFF" : "#666"}
+                        />
+                        <Text
+                          style={[
+                            styles.presetName,
+                            selectedPreset === preset.id && styles.presetNameSelected,
+                          ]}
+                        >
+                          {preset.name}
+                        </Text>
+                        <Text style={styles.presetDescription} numberOfLines={1}>
+                          {preset.description}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* 提供商名称 */}
               <View style={styles.formGroup}>
                 <Text style={styles.label}>提供商名称</Text>
                 <TextInput
@@ -248,32 +452,106 @@ export default function SettingsSection() {
                 />
               </View>
 
+              {/* 提供商类型 */}
               <View style={styles.formGroup}>
                 <Text style={styles.label}>提供商类型</Text>
                 <View style={styles.radioGroup}>
                   {[
-                    "openAiCompatible",
-                    "anthropicCompatible",
-                    "googleCompatible",
+                    { id: "openAiCompatible", label: "OpenAI 兼容" },
+                    { id: "anthropicCompatible", label: "Anthropic 兼容" },
+                    { id: "googleCompatible", label: "Google 兼容" },
+                    { id: "qwenCompatible", label: "通义千问" },
+                    { id: "kimiCompatible", label: "Kimi" },
                   ].map((type) => (
                     <TouchableOpacity
-                      key={type}
+                      key={type.id}
                       style={styles.radioOption}
                       onPress={() =>
-                        setFormData({ ...formData, providerType: type as any })
+                        setFormData({
+                          ...formData,
+                          providerType: type.id as any,
+                          modelName: "",
+                        })
                       }
                     >
                       <View style={styles.radioCircle}>
-                        {formData.providerType === type && (
+                        {formData.providerType === type.id && (
                           <View style={styles.radioInnerCircle} />
                         )}
                       </View>
-                      <Text style={styles.radioLabel}>{type}</Text>
+                      <Text style={styles.radioLabel}>{type.label}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
               </View>
 
+              {/* 模型选择 */}
+              <View style={styles.formGroup}>
+                <View style={styles.modelHeader}>
+                  <Text style={styles.label}>默认模型（可选）</Text>
+                  {isLoadingModels && (
+                    <ActivityIndicator size="small" color="#007AFF" />
+                  )}
+                </View>
+
+                {/* 推荐模型 */}
+                {fetchedModels.recommended.length > 0 && (
+                  <View style={styles.modelSection}>
+                    <Text style={styles.modelSectionTitle}>推荐模型</Text>
+                    <View style={styles.modelSelector}>
+                      {fetchedModels.recommended.map(renderModelOption)}
+                    </View>
+                  </View>
+                )}
+
+                {/* 其他模型 */}
+                {fetchedModels.others.length > 0 && (
+                  <View style={styles.modelSection}>
+                    <TouchableOpacity
+                      style={styles.othersToggle}
+                      onPress={() => setShowAllModels(!showAllModels)}
+                    >
+                      <Text style={styles.modelSectionTitle}>
+                        其他模型 ({fetchedModels.others.length})
+                      </Text>
+                      <Ionicons
+                        name={showAllModels ? "chevron-up" : "chevron-down"}
+                        size={20}
+                        color="#666"
+                      />
+                    </TouchableOpacity>
+                    {showAllModels && (
+                      <View style={styles.modelSelector}>
+                        {fetchedModels.others.map(renderModelOption)}
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {/* 无模型数据时显示 */}
+                {!isLoadingModels &&
+                  fetchedModels.recommended.length === 0 &&
+                  fetchedModels.others.length === 0 && (
+                    <Text style={styles.noModelText}>
+                      {formData.baseUrl && formData.apiKey
+                        ? "无法获取模型列表，请检查 API 地址和密钥"
+                        : "请输入 API 地址和密钥以获取模型列表"}
+                    </Text>
+                  )}
+
+                {/* 获取错误提示 */}
+                {fetchedModels.error && (
+                  <Text style={styles.errorText}>
+                    获取模型失败: {fetchedModels.error}
+                  </Text>
+                )}
+
+                <Text style={styles.helperText}>
+                  选择默认模型用于图片分析，留空则使用自动推荐
+                </Text>
+              </View>
+
+              {/* API地址 */}
               <View style={styles.formGroup}>
                 <Text style={styles.label}>API地址</Text>
                 <TextInput
@@ -289,6 +567,7 @@ export default function SettingsSection() {
                 />
               </View>
 
+              {/* API密钥 */}
               <View style={styles.formGroup}>
                 <Text style={styles.label}>API密钥</Text>
                 <TextInput
@@ -303,6 +582,7 @@ export default function SettingsSection() {
                 />
               </View>
 
+              {/* 设为活跃 */}
               <View style={styles.formGroup}>
                 <View style={styles.switchRow}>
                   <Text style={styles.label}>设为活跃提供商</Text>
@@ -656,5 +936,114 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#fff",
+  },
+  // 预设提供商样式
+  presetGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    marginTop: 8,
+  },
+  presetCard: {
+    width: "30%",
+    minWidth: 100,
+    padding: 12,
+    backgroundColor: "#f9f9f9",
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: "#e5e5ea",
+    alignItems: "center",
+  },
+  presetCardSelected: {
+    borderColor: "#007AFF",
+    backgroundColor: "#f0f7ff",
+  },
+  presetName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#333",
+    marginTop: 8,
+    textAlign: "center",
+  },
+  presetNameSelected: {
+    color: "#007AFF",
+  },
+  presetDescription: {
+    fontSize: 10,
+    color: "#999",
+    marginTop: 4,
+    textAlign: "center",
+  },
+  // 模型选择器样式
+  modelSelector: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 8,
+  },
+  modelOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "#f5f5f5",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  modelOptionSelected: {
+    backgroundColor: "#007AFF",
+    borderColor: "#007AFF",
+  },
+  modelName: {
+    fontSize: 14,
+    color: "#333",
+  },
+  modelNameSelected: {
+    color: "#fff",
+  },
+  multimodalBadge: {
+    marginLeft: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    backgroundColor: "#34C759",
+    borderRadius: 4,
+  },
+  multimodalText: {
+    fontSize: 10,
+    color: "#fff",
+    fontWeight: "600",
+  },
+  noModelText: {
+    fontSize: 14,
+    color: "#999",
+    fontStyle: "italic",
+  },
+  // 模型选择器新样式
+  modelHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  modelSection: {
+    marginBottom: 16,
+  },
+  modelSectionTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#666",
+    marginBottom: 8,
+  },
+  othersToggle: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  errorText: {
+    fontSize: 14,
+    color: "#FF3B30",
+    marginTop: 8,
   },
 });

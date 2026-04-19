@@ -1,6 +1,37 @@
 import * as Storage from "./storage";
 import { z } from "zod";
 
+// 支持的模型列表
+export const SUPPORTED_MODELS = [
+  // OpenAI 模型 (2025-2026 最新)
+  { id: "gpt-4.1", name: "GPT-4.1", provider: "openai", multimodal: true },
+  { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", provider: "openai", multimodal: true },
+  { id: "gpt-4.1-nano", name: "GPT-4.1 Nano", provider: "openai", multimodal: true },
+  { id: "gpt-4o", name: "GPT-4o", provider: "openai", multimodal: true },
+  { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "openai", multimodal: true },
+  { id: "o4-mini", name: "o4-mini (推理)", provider: "openai", multimodal: true },
+  { id: "o3", name: "o3 (推理)", provider: "openai", multimodal: true },
+  // Claude 模型 (2025-2026 最新)
+  { id: "claude-opus-4-7-20260416", name: "Claude Opus 4.7", provider: "anthropic", multimodal: true },
+  { id: "claude-opus-4-6-20260217", name: "Claude Opus 4.6", provider: "anthropic", multimodal: true },
+  { id: "claude-opus-4-5-20251101", name: "Claude Opus 4.5", provider: "anthropic", multimodal: true },
+  { id: "claude-sonnet-4-6-20260217", name: "Claude Sonnet 4.6", provider: "anthropic", multimodal: true },
+  { id: "claude-sonnet-4-5-20250929", name: "Claude Sonnet 4.5", provider: "anthropic", multimodal: true },
+  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", provider: "anthropic", multimodal: true },
+  // Qwen 模型 (阿里巴巴)
+  { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", provider: "qwen", multimodal: true },
+  { id: "qwen3.5-plus", name: "Qwen 3.5 Plus", provider: "qwen", multimodal: true },
+  { id: "qwen3.5-omni", name: "Qwen 3.5 Omni (全模态)", provider: "qwen", multimodal: true },
+  { id: "qwen-plus", name: "Qwen Plus", provider: "qwen", multimodal: false },
+  // Kimi 模型 (Moonshot)
+  { id: "kimi-k2.5", name: "Kimi K2.5", provider: "kimi", multimodal: true },
+  // Google 模型
+  { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "google", multimodal: true },
+  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "google", multimodal: true },
+  { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "google", multimodal: true },
+  { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", provider: "google", multimodal: true },
+] as const;
+
 // Zod schema for LLM Provider
 export const LLMProviderSchema = z.object({
   apiKey: z.string(),
@@ -14,7 +45,10 @@ export const LLMProviderSchema = z.object({
     "anthropicCompatible",
     "openAiCompatible",
     "googleCompatible",
+    "qwenCompatible",
+    "kimiCompatible",
   ]),
+  modelName: z.string().optional(), // 用户选择的模型名称
   isActive: z.boolean(),
 });
 
