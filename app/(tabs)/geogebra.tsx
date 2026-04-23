@@ -407,6 +407,47 @@ function AIChatPanel({
 let ggbAppletInstance: any = null;
 let pendingCommands: string[] = [];
 
+// 共享的 GeoGebra Classic 6 布局 CSS
+// 作用：把默认的“左工具栏 + 右画板”强制改为“上工具栏 + 下画板”（Classic 5 风格）
+const GGB_LAYOUT_CSS = `
+  .GeoGebraFrame { display: flex !important; flex-direction: column !important; }
+  .GeoGebraFrame > div { width: 100% !important; }
+  .GeoGebraFrame .ggbdockpanelhack,
+  .GeoGebraFrame [class*="dockPanel"],
+  .GeoGebraFrame .appletPanel {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+  }
+  .GeoGebraFrame .toolbar-panel,
+  .GeoGebraFrame [class*="toolbar"] {
+    order: -1 !important;
+    width: 100% !important;
+    flex: 0 0 auto !important;
+  }
+  .GeoGebraFrame .euclidianPanel,
+  .GeoGebraFrame [class*="euclidian"] {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    min-height: 0 !important;
+  }
+  .GeoGebraFrame .algebraPanel,
+  .GeoGebraFrame [class*="algebra"] {
+    order: 99 !important;
+    width: 100% !important;
+  }
+`;
+
+// Web 端将布局 CSS 注入到 document.head（只注入一次）
+function injectGgbLayoutCSS() {
+  if (Platform.OS !== "web" || typeof document === "undefined") return;
+  if (document.getElementById("ggb-layout-override")) return;
+  const style = document.createElement("style");
+  style.id = "ggb-layout-override";
+  style.textContent = GGB_LAYOUT_CSS;
+  document.head.appendChild(style);
+}
+
 // Web 端使用的 GeoGebra 组件 - 使用官方 API
 function GeoGebraWebView({
   injectScript,
@@ -469,12 +510,14 @@ function GeoGebraWebView({
       // 将子容器添加到 React 管理的容器中
       containerRef.current.appendChild(ggbContainer);
 
-      // 创建 applet 参数
+      // 统一使用 Classic 6（HTML5 几何应用），与移动端保持一致
       const parameters = {
+        appName: "geometry",
         id: "ggbApplet",
         width: width,
         height: height,
         showToolBar: true,
+        showToolBarHelp: false,
         borderColor: "#FFFFFF",
         showMenuBar: false,
         showAlgebraInput: true,
@@ -482,15 +525,23 @@ function GeoGebraWebView({
         enableLabelDrags: true,
         enableShiftDragZoom: true,
         enableRightClick: false,
-        capturingThreshold: 3,
+        capturingThreshold: 10,
         showAxes: true,
         showGrid: true,
         useBrowserForJS: false,
-        perspective: "G",
+        preventFocus: true,
+        algebraInputPosition: "bottom",
       };
 
-      // 创建 applet 实例并注入到子容器
-      const applet = new window.GGBApplet(parameters, "5.0");
+      // 注入全局 CSS 强制 Classic 6 使用“上工具栏 + 下画板”布局
+      // （覆盖宽屏时 Classic 6 默认的左右两栏布局）
+      injectGgbLayoutCSS();
+
+      // 创建 applet 实例并注入到子容器（Classic 6: 第二参数为 true）
+      const applet = new window.GGBApplet(parameters, true);
+      if (typeof applet.setHTML5Codebase === "function") {
+        applet.setHTML5Codebase("https://www.geogebra.org/apps/latest/web/");
+      }
       applet.inject(ggbContainerId);
       appletRef.current = applet;
 
@@ -613,6 +664,199 @@ function GeoGebraWebView({
   );
 }
 
+// GeoGebra 画板组件 - 移动端使用 HTML string 加载 deployggb.js API
+const GEOGEBRA_HTML = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #ffffff; }
+    #ggb-container { width: 100%; height: 100%; background-color: #ffffff; }
+    #ggb-container canvas { display: block !important; }
+    #loading-msg { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); font-family: sans-serif; color: #333; z-index: 1000; background: rgba(255,255,255,0.9); padding: 20px; border-radius: 8px; }
+
+    /* 强制 Classic 6 使用“上工具栏 + 下画板”布局，覆盖宽屏时的左右布局 */
+    .GeoGebraFrame { display: flex !important; flex-direction: column !important; }
+    .GeoGebraFrame > div { width: 100% !important; }
+    /* dock 容器纵向排列 */
+    .GeoGebraFrame .ggbdockpanelhack,
+    .GeoGebraFrame [class*="dockPanel"],
+    .GeoGebraFrame .appletPanel {
+      display: flex !important;
+      flex-direction: column !important;
+      width: 100% !important;
+    }
+    /* 工具栏固定在顶部 */
+    .GeoGebraFrame .toolbar-panel,
+    .GeoGebraFrame [class*="toolbar"] {
+      order: -1 !important;
+      width: 100% !important;
+      flex: 0 0 auto !important;
+    }
+    /* 画板占据剩余空间 */
+    .GeoGebraFrame .euclidianPanel,
+    .GeoGebraFrame [class*="euclidian"] {
+      flex: 1 1 auto !important;
+      width: 100% !important;
+      min-height: 0 !important;
+    }
+    /* 代数输入栏放底部 */
+    .GeoGebraFrame .algebraPanel,
+    .GeoGebraFrame [class*="algebra"] {
+      order: 99 !important;
+      width: 100% !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading-msg">加载 GeoGebra...</div>
+  <div id="ggb-container"></div>
+  <script>
+    // 劫持 console 发送到 React Native（原函数 bind 避免递归）
+    (function() {
+      if (!window.ReactNativeWebView) return;
+      var origLog = console.log.bind(console);
+      var origErr = console.error.bind(console);
+      function safePost(type, args) {
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({type: type, message: Array.prototype.slice.call(args).join(' ')}));
+        } catch(e) {}
+      }
+      console.log = function() { origLog.apply(null, arguments); safePost('log', arguments); };
+      console.error = function() { origErr.apply(null, arguments); safePost('error', arguments); };
+      window.onerror = function(msg, url, line) { safePost('error', ['window.onerror:', msg, '@', url, ':', line]); };
+    })();
+    console.log('[GGB] HTML page loaded, waiting for container...');
+
+    // 等待容器有尺寸后再加载（与 web 端逻辑一致）
+    function waitForContainer() {
+      var container = document.getElementById('ggb-container');
+      var width = window.innerWidth || document.documentElement.clientWidth;
+      var height = window.innerHeight || document.documentElement.clientHeight;
+      console.log('[GGB] Container size:', width, 'x', height);
+      
+      if (width === 0 || height === 0) {
+        console.log('[GGB] Container has no size, waiting...');
+        setTimeout(waitForContainer, 100);
+        return;
+      }
+      
+      loadGGBScript();
+    }
+
+    // 动态加载 GeoGebra 脚本（与 web 端逻辑一致）
+    function loadGGBScript() {
+      if (typeof GGBApplet !== 'undefined') {
+        console.log('[GGB] GGBApplet already loaded');
+        initApplet();
+        return;
+      }
+      
+      console.log('[GGB] Loading GeoGebra script...');
+      var script = document.createElement('script');
+      script.src = 'https://www.geogebra.org/apps/deployggb.js';
+      script.onload = function() {
+        console.log('[GGB] Script loaded');
+        initApplet();
+      };
+      script.onerror = function() {
+        console.error('[GGB] Failed to load script');
+        document.getElementById('loading-msg').innerText = '无法加载 GeoGebra 脚本';
+      };
+      document.head.appendChild(script);
+    }
+
+    // 初始化 applet（与 web 端逻辑一致）
+    function initApplet() {
+      var container = document.getElementById('ggb-container');
+      var width = window.innerWidth || 800;
+      var height = window.innerHeight || 600;
+      
+      console.log('[GGB] Initializing applet with size:', width, 'x', height);
+      
+      try {
+        // 使用 Classic 6（HTML5，2D canvas，不依赖 WebGL，Android 上最稳定）
+        // 通过后续 CSS 注入把默认的左右布局改成上下布局（上工具栏 + 下画板）
+        var params = {
+          appName: "geometry",
+          id: "ggbApplet",
+          width: width,
+          height: height,
+          showToolBar: true,
+          showToolBarHelp: false,
+          borderColor: "#FFFFFF",
+          showMenuBar: false,
+          showAlgebraInput: true,
+          showResetIcon: false,
+          enableLabelDrags: true,
+          enableShiftDragZoom: true,
+          enableRightClick: false,
+          capturingThreshold: 10,
+          showAxes: true,
+          showGrid: true,
+          useBrowserForJS: false,
+          preventFocus: true,
+          algebraInputPosition: "bottom",
+        };
+
+        // 使用 Classic 6 HTML5 codebase
+        var applet = new GGBApplet(params, true);
+        applet.setHTML5Codebase('https://www.geogebra.org/apps/latest/web/');
+        applet.inject("ggb-container");
+
+        document.getElementById('loading-msg').style.display = 'none';
+        console.log('[GGB] Applet injected (Classic 6 / geometry app)');
+      } catch(e) {
+        console.error('[GGB] Failed to inject:', e.toString());
+        document.getElementById('loading-msg').innerText = '初始化失败: ' + e.message;
+        return;
+      }
+
+      // 等待 applet 准备好
+      var checkCount = 0;
+      var readySent = false;
+      var checkReady = setInterval(function() {
+        checkCount++;
+        var ggb = window.ggbApplet;
+        var container = document.getElementById('ggb-container');
+        var canvas = container ? container.querySelector('canvas') : null;
+
+        if (ggb && typeof ggb.evalCommand === 'function' && canvas && !readySent) {
+          readySent = true;
+          clearInterval(checkReady);
+          try { window.ReactNativeWebView.postMessage(JSON.stringify({type: 'ready'})); } catch(e) {}
+          console.log('[GGB] Applet ready after', checkCount, 'checks. Canvas:', canvas.width, 'x', canvas.height);
+          
+          // 诊断：打印实际 DOM 类名
+          var frame = document.querySelector('.GeoGebraFrame');
+          if (frame) {
+            console.log('[GGB] Frame found, children:', frame.children.length);
+            Array.from(frame.children).forEach(function(child, i) {
+              console.log('[GGB] Child', i, ':', child.tagName, child.className && child.className.substring(0, 60));
+            });
+          }
+        } else if (checkCount % 10 === 0) {
+          console.log('[GGB] Still waiting, check #' + checkCount + ', ggb=' + !!ggb + ', canvas=' + !!canvas);
+        }
+
+        if (checkCount > 240) {
+          clearInterval(checkReady);
+          console.error('[GGB] Timeout waiting for applet');
+          var msg = document.getElementById('loading-msg');
+          if (msg) msg.innerText = '加载超时 (无canvas)';
+        }
+      }, 500);
+    }
+
+    // 启动
+    setTimeout(waitForContainer, 100);
+  </script>
+</body>
+</html>
+`;
+
 // GeoGebra 画板组件
 function GeoGebraPanel({
   webViewRef,
@@ -621,6 +865,69 @@ function GeoGebraPanel({
   webViewRef: React.RefObject<any>;
   injectScript?: string;
 }) {
+  const [isAppletReady, setIsAppletReady] = useState(false);
+
+  // 处理来自 WebView 的消息
+  const handleMessage = useCallback((event: any) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === "ready") {
+        setIsAppletReady(true);
+        console.log("[GGB] GeoGebra applet ready on mobile");
+      } else if (data.type === "log") {
+        console.log("[GGB WebView]", data.message);
+      } else if (data.type === "error") {
+        console.error("[GGB WebView Error]", data.message);
+      }
+    } catch (e) {
+      console.log("[GGB] WebView message:", event.nativeEvent.data);
+    }
+  }, []);
+
+  // 处理 WebView 加载事件
+  const handleLoadStart = useCallback(() => {
+    console.log("[GGB] WebView load start");
+  }, []);
+
+  const handleLoadEnd = useCallback(() => {
+    console.log("[GGB] WebView load end");
+  }, []);
+
+  const handleLoadError = useCallback((event: any) => {
+    console.error("[GGB] WebView error:", event.nativeEvent);
+  }, []);
+
+  const handleHttpError = useCallback((event: any) => {
+    console.error("[GGB] WebView HTTP error:", event.nativeEvent);
+  }, []);
+
+  // 处理注入脚本 - 提取并执行命令
+  useEffect(() => {
+    if (!injectScript || !webViewRef.current) return;
+
+    // 从脚本中提取命令
+    const commandMatch = injectScript.match(/ggbApplet\.evalCommand\("(.+?)"\)/);
+    if (commandMatch && commandMatch[1]) {
+      const command = commandMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+      const jsCode = `
+        (function() {
+          try {
+            var cmd = "${command.replace(/"/g, '\\"')}";
+            if (window.ggbApplet && window.ggbApplet.evalCommand) {
+              window.ggbApplet.evalCommand(cmd);
+              window.ggbApplet.refreshViews();
+            }
+            return true;
+          } catch(e) {
+            console.error(e);
+            return false;
+          }
+        })()
+      `;
+      webViewRef.current.injectJavaScript(jsCode);
+    }
+  }, [injectScript, webViewRef]);
+
   return (
     <View style={styles.geogebraContainer}>
       <View style={styles.geogebraHeader}>
@@ -631,16 +938,38 @@ function GeoGebraPanel({
         <GeoGebraWebView injectScript={injectScript} />
       ) : (
         WebView && (
-          <WebView
-            ref={webViewRef}
-            source={{ uri: GEOGEBRA_URL }}
-            style={styles.webview}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            startInLoadingState={true}
-            allowsInlineMediaPlayback={true}
-            mediaPlaybackRequiresUserAction={false}
-          />
+          <View style={styles.webviewWrapper}>
+            {!isAppletReady && (
+              <View style={styles.loadingOverlay}>
+                <ActivityIndicator size="large" color="#007AFF" />
+                <Text style={styles.loadingText}>加载 GeoGebra...</Text>
+              </View>
+            )}
+            <WebView
+              ref={webViewRef}
+              source={{ html: GEOGEBRA_HTML, baseUrl: 'https://www.geogebra.org' }}
+              style={styles.webview}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              startInLoadingState={true}
+              allowsInlineMediaPlayback={true}
+              mediaPlaybackRequiresUserAction={false}
+              onMessage={handleMessage}
+              onLoadStart={handleLoadStart}
+              onLoad={handleLoadEnd}
+              onError={handleLoadError}
+              onHttpError={handleHttpError}
+              originWhitelist={['*']}
+              mixedContentMode="always"
+              allowFileAccess={true}
+              allowUniversalAccessFromFileURLs={true}
+              androidLayerType="hardware"
+              setSupportMultipleWindows={false}
+              thirdPartyCookiesEnabled={true}
+              cacheEnabled={true}
+              javaScriptCanOpenWindowsAutomatically={true}
+            />
+          </View>
         )
       )}
     </View>
@@ -768,6 +1097,22 @@ const styles = StyleSheet.create({
   },
   webview: {
     flex: 1,
+  },
+  webviewWrapper: {
+    flex: 1,
+    position: "relative",
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#f5f5f5",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#666",
   },
   webviewContainer: {
     flex: 1,
