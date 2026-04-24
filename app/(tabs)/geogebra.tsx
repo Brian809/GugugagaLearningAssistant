@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+﻿import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -407,48 +407,7 @@ function AIChatPanel({
 let ggbAppletInstance: any = null;
 let pendingCommands: string[] = [];
 
-// 共享的 GeoGebra Classic 6 布局 CSS
-// 作用：把默认的“左工具栏 + 右画板”强制改为“上工具栏 + 下画板”（Classic 5 风格）
-const GGB_LAYOUT_CSS = `
-  .GeoGebraFrame { display: flex !important; flex-direction: column !important; }
-  .GeoGebraFrame > div { width: 100% !important; }
-  .GeoGebraFrame .ggbdockpanelhack,
-  .GeoGebraFrame [class*="dockPanel"],
-  .GeoGebraFrame .appletPanel {
-    display: flex !important;
-    flex-direction: column !important;
-    width: 100% !important;
-  }
-  .GeoGebraFrame .toolbar-panel,
-  .GeoGebraFrame [class*="toolbar"] {
-    order: -1 !important;
-    width: 100% !important;
-    flex: 0 0 auto !important;
-  }
-  .GeoGebraFrame .euclidianPanel,
-  .GeoGebraFrame [class*="euclidian"] {
-    flex: 1 1 auto !important;
-    width: 100% !important;
-    min-height: 0 !important;
-  }
-  .GeoGebraFrame .algebraPanel,
-  .GeoGebraFrame [class*="algebra"] {
-    order: 99 !important;
-    width: 100% !important;
-  }
-`;
-
-// Web 端将布局 CSS 注入到 document.head（只注入一次）
-function injectGgbLayoutCSS() {
-  if (Platform.OS !== "web" || typeof document === "undefined") return;
-  if (document.getElementById("ggb-layout-override")) return;
-  const style = document.createElement("style");
-  style.id = "ggb-layout-override";
-  style.textContent = GGB_LAYOUT_CSS;
-  document.head.appendChild(style);
-}
-
-// Web 端使用的 GeoGebra 组件 - 使用官方 API
+// Web 端使用的 GeoGebra 组件
 function GeoGebraWebView({
   injectScript,
 }: {
@@ -532,10 +491,6 @@ function GeoGebraWebView({
         preventFocus: true,
         algebraInputPosition: "bottom",
       };
-
-      // 注入全局 CSS 强制 Classic 6 使用“上工具栏 + 下画板”布局
-      // （覆盖宽屏时 Classic 6 默认的左右两栏布局）
-      injectGgbLayoutCSS();
 
       // 创建 applet 实例并注入到子容器（Classic 6: 第二参数为 true）
       const applet = new window.GGBApplet(parameters, true);
