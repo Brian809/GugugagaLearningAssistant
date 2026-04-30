@@ -1,0 +1,126 @@
+{
+  "active_plan": "C:\\Users\\yjx12\\Documents\\Projects\\GugugagaLearningAssistant\\GugugagaLearningAssistant\\.sisyphus\\plans\\ai-learning-features.md",
+  "started_at": "2026-04-30T10:05:46.246Z",
+  "session_ids": [
+    "ses_2223bfaf2ffe56crP1ROYx9kX4",
+    "ses_22224665effe1NhYxaNTWN0gyq",
+    "ses_22221c38dffeAdMConwvNpfx14",
+    "ses_22221653bffeMRnEcWWN4Nv590",
+    "ses_2221b92c5ffeaOvpYwto2rZkHz",
+    "ses_2221b0e99ffejINFnyZ3MzHh3D",
+    "ses_2221a4720ffeOVV3cJGoeuzdqT",
+    "ses_22214d8a4ffekPfGZgLGQUMEeX",
+    "ses_22214502fffex32xFFkRrcSagW",
+    "ses_2220d0060ffefJnKAbo0V3c1S0",
+    "ses_2220d56b3ffeAlPK1LMmyJvTOL",
+    "ses_2220df1bdffeI3DBqv0YwlnXYB",
+    "ses_2220dabeaffemFiUDSzd234H0Q",
+    "ses_22203ea26ffe77cnQRjdO9qfI7",
+    "ses_22203bbbdffepcEsxJUesWCanv",
+    "ses_222041197ffep2ZzzM6lNf8aAm",
+    "ses_221fa7d9bffepFE2Cx5ahhKUXq",
+    "ses_221f82eaaffeYuhzW8RZqYdrki",
+    "ses_221f7ff4cffe0BNQoMz27NS60K",
+    "ses_221e2465bffeuVFERhwTSpRekO",
+    "ses_221dc6bb1ffe3F1nfruumCCkci",
+    "ses_221dc9819ffeto6E8HUFoBRwYR",
+    "ses_221dcb6faffelqgbByZyF6jMwv",
+    "ses_221dc5008ffeHzW2BZ4We1EHHg",
+    "ses_221d34a11ffeSW1wcfgzQ0wKmt",
+    "ses_221d11dd9ffeIBI6kgJnWBZDo7",
+    "ses_221d13ac1ffeyo54UJrHIXT6GJ"
+  ],
+  "plan_name": "ai-learning-features",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Add root `_layout.tsx` with Stack navigator",
+      "session_id": "ses_22224665effe1NhYxaNTWN0gyq",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-30T10:08:29.695Z"
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "Create `app/(learning)/` route group with Stack layout",
+      "session_id": "ses_22221c38dffeAdMConwvNpfx14",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-04-30T10:13:23.202Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "Create streaming polyfills and AI client utilities",
+      "session_id": "ses_2221b92c5ffeaOvpYwto2rZkHz",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-04-30T10:21:55.285Z"
+    },
+    "todo:6": {
+      "task_key": "todo:6",
+      "task_label": "6",
+      "task_title": "Implement mistake notebook store (Drizzle + Zustand)",
+      "session_id": "ses_22214d8a4ffekPfGZgLGQUMEeX",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-30T10:27:36.456Z"
+    },
+    "todo:9": {
+      "task_key": "todo:9",
+      "task_label": "9",
+      "task_title": "Create shared ChatPanel component (solve + explain modes)",
+      "session_id": "ses_2220df1bdffeI3DBqv0YwlnXYB",
+      "agent": "Sisyphus-Junior",
+      "category": "visual-engineering",
+      "updated_at": "2026-04-30T10:37:02.743Z"
+    },
+    "todo:13": {
+      "task_key": "todo:13",
+      "task_label": "13",
+      "task_title": "Build solve.tsx page (step-by-step problem solving)",
+      "session_id": "ses_222041197ffep2ZzzM6lNf8aAm",
+      "agent": "Sisyphus-Junior",
+      "category": "visual-engineering",
+      "updated_at": "2026-04-30T10:51:49.199Z"
+    },
+    "todo:16": {
+      "task_key": "todo:16",
+      "task_label": "16",
+      "task_title": "Rewrite learning.tsx as hub page with 3 feature cards",
+      "session_id": "ses_221fa7d9bffepFE2Cx5ahhKUXq",
+      "agent": "Sisyphus-Junior",
+      "category": "visual-engineering",
+      "updated_at": "2026-04-30T10:55:20.642Z"
+    },
+    "todo:17": {
+      "task_key": "todo:17",
+      "task_label": "17",
+      "task_title": "Add empty states, error states, and no-provider handling",
+      "session_id": "ses_221f82eaaffeYuhzW8RZqYdrki",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-04-30T11:05:19.706Z"
+    },
+    "todo:19": {
+      "task_key": "todo:19",
+      "task_label": "19",
+      "task_title": "TypeScript strict pass + browser-use QA + unit tests",
+      "session_id": "ses_221e2465bffeuVFERhwTSpRekO",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-30T11:24:54.195Z"
+    },
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "**Plan Compliance Audit** — `oracle`",
+      "session_id": "ses_221d13ac1ffeyo54UJrHIXT6GJ",
+      "agent": "oracle",
+      "updated_at": "2026-04-30T11:45:55.960Z"
+    }
+  }
+}
