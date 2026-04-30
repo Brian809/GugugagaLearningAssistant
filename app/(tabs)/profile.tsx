@@ -75,9 +75,9 @@ export default function ProfileScreen() {
           <Text style={styles.sectionTitle}>关于</Text>
           <Text style={styles.aboutText}>咕咕嘎嘎学习助手 v1.0.0</Text>
           <Text style={styles.aboutText}>
-            智能学习助手，帮助您更好地学习和成长
+            咕咕嘎嘎
           </Text>
-          <Text style={styles.copyright}>© 2024 咕咕嘎嘎学习助手</Text>
+          <Text style={styles.copyright}>© 2026 咕咕嘎嘎学习助手</Text>
         </View>
       </ScrollView>
     </SafeAreaView>

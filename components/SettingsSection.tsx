@@ -312,64 +312,47 @@ export default function SettingsSection() {
             </View>
           ) : (
             providers.map((provider, index) => (
-              <View key={index} style={styles.providerCard}>
-                <View style={styles.providerHeader}>
-                  <View style={styles.providerInfo}>
-                    <Text style={styles.providerName}>
-                      {provider.providerName}
-                    </Text>
-                    <Text style={styles.providerType}>
-                      {provider.providerType}
-                    </Text>
-                  </View>
-                  <View style={styles.providerActions}>
-                    {provider.isActive ? (
-                      <View style={styles.activeBadge}>
-                        <Text style={styles.activeBadgeText}>活跃</Text>
-                      </View>
-                    ) : (
-                      <TouchableOpacity
-                        style={styles.activateButton}
-                        onPress={() => handleSetActive(index)}
-                      >
-                        <Text style={styles.activateButtonText}>设为活跃</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-
-                <View style={styles.providerDetails}>
-                  <Text style={styles.providerDetail} numberOfLines={1}>
-                    <Text style={styles.detailLabel}>API地址: </Text>
-                    {provider.baseUrl}
+              <TouchableOpacity
+                key={index}
+                style={styles.providerRow}
+                onPress={() => handleEditProvider(index)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.providerRowLeft}>
+                  <Text style={styles.providerRowName}>
+                    {provider.providerName}
                   </Text>
-                  <Text style={styles.providerDetail} numberOfLines={1}>
-                    <Text style={styles.detailLabel}>API密钥: </Text>
-                    {provider.apiKey ? "••••••••" : "未设置"}
+                  <Text style={styles.providerRowType}>
+                    {provider.providerType}
                   </Text>
                 </View>
-
-                <View style={styles.providerFooter}>
-                  <TouchableOpacity
-                    style={styles.actionButton}
-                    onPress={() => handleEditProvider(index)}
-                  >
-                    <Ionicons name="pencil" size={20} color="#007AFF" />
-                    <Text style={styles.actionButtonText}>编辑</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.actionButton}
-                    onPress={() => handleDeleteProvider(index)}
-                  >
-                    <Ionicons name="trash" size={20} color="#FF3B30" />
-                    <Text
-                      style={[styles.actionButtonText, { color: "#FF3B30" }]}
+                <View style={styles.providerRowRight}>
+                  {provider.isActive ? (
+                    <View style={styles.activeBadge}>
+                      <Text style={styles.activeBadgeText}>活跃</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.activateButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleSetActive(index);
+                      }}
                     >
-                      删除
-                    </Text>
+                      <Text style={styles.activateButtonText}>设为活跃</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={styles.deleteButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleDeleteProvider(index);
+                    }}
+                  >
+                    <Ionicons name="trash" size={18} color="#FF3B30" />
                   </TouchableOpacity>
                 </View>
-              </View>
+              </TouchableOpacity>
             ))
           )}
         </View>
@@ -720,43 +703,36 @@ const styles = StyleSheet.create({
     color: "#ccc",
     textAlign: "center",
   },
-  providerCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  providerHeader: {
+  providerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
   },
-  providerInfo: {
+  providerRowLeft: {
     flex: 1,
   },
-  providerName: {
-    fontSize: 18,
-    fontWeight: "600",
+  providerRowName: {
+    fontSize: 16,
+    fontWeight: "500",
     color: "#333",
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  providerType: {
-    fontSize: 14,
-    color: "#666",
-    backgroundColor: "#f0f0f0",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    alignSelf: "flex-start",
+  providerRowType: {
+    fontSize: 13,
+    color: "#999",
   },
-  providerActions: {
-    marginLeft: 12,
+  providerRowRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  deleteButton: {
+    padding: 4,
   },
   activeBadge: {
     backgroundColor: "#34C759",
@@ -779,35 +755,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 14,
     fontWeight: "600",
-  },
-  providerDetails: {
-    marginBottom: 12,
-  },
-  providerDetail: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 4,
-  },
-  detailLabel: {
-    fontWeight: "500",
-    color: "#333",
-  },
-  providerFooter: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-    paddingTop: 12,
-  },
-  actionButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginLeft: 20,
-  },
-  actionButtonText: {
-    fontSize: 14,
-    color: "#007AFF",
-    marginLeft: 4,
   },
   clearButton: {
     margin: 20,

@@ -1,4 +1,4 @@
-import { generateText, tool } from "ai";
+import { generateText, tool, ModelMessage } from "ai";
 import { z } from "zod";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
@@ -56,6 +56,10 @@ function createAIClient(provider: LLMProvider) {
   if (isOpenRouter) {
     return createOpenRouter({
       apiKey: provider.apiKey,
+      headers: {
+        "HTTP-Referer": "https://gugugaga-learning-assistant.app",
+        "X-Title": "Gugugaga Learning Assistant",
+      },
     });
   }
   
@@ -63,6 +67,13 @@ function createAIClient(provider: LLMProvider) {
     baseURL: provider.baseUrl,
     apiKey: provider.apiKey,
   });
+}
+
+/**
+ * 判断是否为 OpenRouter 提供商
+ */
+function isOpenRouterProvider(provider: LLMProvider): boolean {
+  return provider.baseUrl.includes("openrouter.ai");
 }
 
 // 步骤信息类型
@@ -150,9 +161,9 @@ ${commandCalls}
 }
 
 /**
- * 分析图片并逐步生成 GeoGebra 指令（手动循环模式）
+ * 分析图片并逐步生成 GeoGebra 指令（function calling 模式）
  * 
- * 使用手动循环而不是 stopWhen，以确保与 OpenRouter 等提供商的兼容性
+ * 使用 ai SDK 的 function calling 特性，模型会调用工具而不是返回 JSON 文本
  */
 export async function analyzeImageWithSteps(
   imageUri: string,
@@ -164,307 +175,26 @@ export async function analyzeImageWithSteps(
   const base64Image = await imageToBase64(imageUri);
   const mimeType = imageUri.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
   const modelName = getModelName(provider, true);
+  const useOpenRouter = isOpenRouterProvider(provider);
 
   const userMessageContent = userPrompt
     ? `${userPrompt}\n\n请分析这张几何图片，然后分步生成 GeoGebra 指令。一次执行一条命令，等待执行结果后再继续。`
     : "请分析这张几何图片，然后分步生成 GeoGebra 指令来重建这个图形。一次执行一条命令，等待执行结果后再继续。";
 
-  // 系统提示
   const systemPrompt = `你是一个专业的几何绘图助手，使用 GeoGebra 重建几何图形。
 
 ## 执行规则（必须遵守）
 1. 分析图片后，规划作图步骤
-2. 生成一条 GeoGebra 命令（以 JSON 格式返回）
-3. 等待用户返回执行结果
-4. 如果成功，继续执行下一条命令
-5. 如果失败，分析原因并调整
-6. 所有命令执行完毕后，返回完成状态
+2. 调用 execute_geo_gebra_step 工具返回当前步骤的命令
+3. 等待执行结果后，继续调用工具返回下一步
+4. 如果执行失败，分析原因并调整命令
+5. 所有命令执行完毕后，调用 complete_geo_gebra_task 工具标记完成
 
 ## 作图原则
 - 从基础元素开始：先创建点（如 A = (0, 0)）
 - 逐步构建：点 → 线 → 圆 → 多边形
 - 依赖关系：确保引用已创建的元素
 - 一次一条：禁止一次返回多条命令（不要用分号分隔）
-
-## 响应格式
-你必须以 JSON 格式响应，包含以下字段：
-- stepNumber: 当前步骤序号
-- totalSteps: 预计总步骤数
-- command: GeoGebra 命令（仅一条，不要用分号分隔多条命令）
-- description: 命令说明
-- expectedResult: 预期结果
-- isComplete: 是否完成（true/false）
-- finalDescription: 完成时的图形描述（仅 isComplete=true 时需要）
-- finalElements: 完成时的元素列表（仅 isComplete=true 时需要）
-- finalSteps: 完成时的步骤总结（仅 isComplete=true 时需要）
-
-## GeoGebra 完整命令参考
-
-### 点（Point）
-- 自由点：A = (0, 0)  或  B = (3, 4)
-- 线段上的点（可拖动）：E = Point(s)  其中 s 是线段
-- 直线上的点（可拖动）：E = Point(l)  其中 l 是直线
-- 指定位置的点：E = Point(s, 0.5)  参数 0-1 表示在线段上的位置
-- 中点：M = Midpoint(A, B)  或  M = Midpoint(s)
-
-### 线段和直线
-- 线段：s = Segment(A, B)
-- 无限直线：l = Line(A, B)
-- 射线：r = Ray(A, B)
-
-### 垂直线（正确命令）
-- 过点垂直于直线：p = PerpendicularLine(P, l)
-- 过点垂直于线段：p = PerpendicularLine(P, s)
-- 垂足（交点）：F = Intersect(p, s)  或  F = Intersect(p, l)
-
-### 圆
-- 圆心和半径：c = Circle(A, 5)
-- 圆心和过点：c = Circle(A, B)
-- 过三点：c = Circle(A, B, C)
-
-### 多边形
-- 多边形：poly = Polygon(A, B, C, D)
-- 正多边形：poly = Polygon(A, B, 6)  以 AB 为边的六边形
-
-### 交点
-- 两线交点：I = Intersect(l1, l2)
-- 线与圆交点：I = Intersect(l, c)
-- 两圆交点：I = Intersect(c1, c2)
-
-### 角度
-- 角度：α = Angle(A, B, C)  顶点在 B
-- 角度（带方向）：α = Angle(A, B, C, direction)
-
-### 其他常用命令
-- 距离：d = Distance(A, B)
-- 长度：len = Length(s)
-- 面积：area = Area(poly)
-- 斜率：m = Slope(l)
-
-## 重要提示
-- 每个步骤只能包含一条 GeoGebra 命令
-- 错误示例：A = (0, 0); B = (3, 0); C = (3, 3)  （这是三条命令）
-- 正确示例：A = (0, 0)  （这是单条命令）
-
-## 常见错误纠正
-错误: PointOnSegment(A, C)    正确: Point(Segment(A, C)) 或 Point(s)
-错误: PerpendicularFoot(E, l) 正确: Intersect(PerpendicularLine(E, l), l)
-错误: PointOnLine(E, l)       正确: Point(l)
-
-## 关键规则：引用已创建的对象
-必须记住你创建的对象名称，并在后续命令中正确使用。
-创建了 s = Polygon(A, B, C, D) 后，正方形的边不会自动变成 AB、BC、CD、DA
-如果需要使用线段，必须先显式创建：
-正确: AB = Segment(A, B) 然后 PerpendicularLine(E, AB)
-正确: 或者直接使用 PerpendicularLine(E, Segment(A, B))
-错误: 不要假设 AB 自动存在！AB 是一个变量名，除非你创建了它，否则不存在
-
-## 正确的作图流程示例
-步骤1: A = (0, 4)           // 创建点A
-步骤2: B = (0, 0)           // 创建点B  
-步骤3: C = (4, 0)           // 创建点C
-步骤4: D = (4, 4)           // 创建点D
-步骤5: s = Polygon(A, B, C, D)  // 创建多边形s
-步骤6: AB = Segment(A, B)   // 显式创建线段AB
-步骤7: p = PerpendicularLine(E, AB)  // 正确引用线段AB
-
-## 错误示例（不要这样做）
-步骤5: s = Polygon(A, B, C, D)
-步骤6: p = PerpendicularLine(E, AB)  // 错误！AB不存在！`
-
-  // 存储最终结果
-  let finalResult: { description: string; elements: unknown[]; suggestedSteps: string[] } | null = null;
-  const allSteps: string[] = [];
-  const allCommands: string[] = []; // 存储所有已执行的命令
-  let stepCount = 0;
-  const maxSteps = 50;
-
-  // 第一轮：发送图片 + 获取分析
-  console.log("\n=== 第 1 步：分析图片 ===");
-  
-  const firstResult = await generateText({
-    model: client(modelName),
-    messages: [
-      { role: "system", content: systemPrompt },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: userMessageContent },
-          { 
-            type: "image", 
-            image: base64Image,
-            mediaType: mimeType,
-          },
-        ],
-      },
-    ],
-  });
-
-  // 解析第一轮响应
-  let stepData: {
-    stepNumber: number;
-    totalSteps: number;
-    command: string;
-    description: string;
-    expectedResult: string;
-    isComplete: boolean;
-    finalDescription?: string;
-    finalElements?: unknown[];
-    finalSteps?: string[];
-  };
-
-  try {
-    const jsonMatch = firstResult.text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      stepData = JSON.parse(jsonMatch[0]);
-    } else {
-      throw new Error("无法解析模型响应");
-    }
-  } catch {
-    console.error("第一轮解析失败:", firstResult.text);
-    throw new Error("模型未返回有效的 JSON 格式");
-  }
-
-  // 初始化消息历史，保持一致性
-  // 包含：system + 带图片的 user 消息 + assistant 回复
-  const messages = [
-    { role: "system" as const, content: systemPrompt },
-    { 
-      role: "user" as const, 
-      content: [
-        { type: "text" as const, text: userMessageContent },
-        { type: "image" as const, image: base64Image, mediaType: mimeType },
-      ],
-    },
-    { role: "assistant" as const, content: firstResult.text },
-  ];
-
-  // 手动循环执行
-  while (stepCount < maxSteps) {
-    stepCount++;
-    console.log(`\n=== 开始第 ${stepCount} 步 ===`);
-
-    // 检查是否完成
-    if (stepData.isComplete) {
-      finalResult = {
-        description: stepData.finalDescription || "绘图完成",
-        elements: stepData.finalElements || [],
-        suggestedSteps: stepData.finalSteps || allSteps,
-      };
-      break;
-    }
-
-    // 执行命令
-    console.log(`执行步骤 ${stepData.stepNumber}/${stepData.totalSteps}: ${stepData.command}`);
-    allSteps.push(`${stepData.stepNumber}. ${stepData.description}: ${stepData.command}`);
-    allCommands.push(stepData.command); // 保存命令用于变量追踪
-
-    const executionResult = await onStepExecution({
-      stepNumber: stepData.stepNumber,
-      totalSteps: stepData.totalSteps,
-      command: stepData.command,
-      description: stepData.description,
-      expectedResult: stepData.expectedResult,
-    });
-
-    // 将执行结果添加到消息历史
-    messages.push({
-      role: "user" as const,
-      content: [{ type: "text" as const, text: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n请继续下一步，以 JSON 格式返回。` }],
-    });
-
-    // 构建当前消息，包含已创建的对象列表
-    const currentMessages = [...messages];
-    if (allCommands.length > 0) {
-      // 提取所有已定义的变量名
-      const definedVariables = allCommands
-        .map(cmd => {
-          const match = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
-          return match ? match[1] : null;
-        })
-        .filter(Boolean);
-      
-      currentMessages.push({
-        role: "user" as const,
-        content: [{ type: "text" as const, text: `[提醒]已创建的对象：${definedVariables.join(", ")}。请确保只引用这些已定义的对象，不要引用不存在的变量。` }],
-      });
-    }
-
-    // 调用模型获取下一步
-    const result = await generateText({
-      model: client(modelName),
-      messages: currentMessages,
-    });
-
-    // 解析模型响应
-    try {
-      const jsonMatch = result.text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        stepData = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error("无法解析模型响应");
-      }
-    } catch {
-      console.error("解析响应失败:", result.text);
-      // 如果解析失败，提示模型重新返回
-      messages.push({ role: "assistant" as const, content: result.text });
-      messages.push({ role: "user" as const, content: [{ type: "text" as const, text: "请以上述 JSON 格式返回下一步命令。" }] });
-      continue;
-    }
-
-    // 将模型响应添加到消息历史
-    messages.push({
-      role: "assistant" as const,
-      content: result.text,
-    });
-  }
-
-  if (!finalResult) {
-    throw new Error(`绘图未完成，已达到最大步骤数 (${maxSteps})`);
-  }
-
-  return finalResult;
-}
-
-/**
- * 根据描述逐步生成 GeoGebra 指令（手动循环模式）
- */
-export async function generateFromDescriptionWithSteps(
-  description: string,
-  provider: LLMProvider,
-  onStepExecution: StepExecutionCallback
-): Promise<{ description: string; elements: unknown[]; suggestedSteps: string[] }> {
-  const client = createAIClient(provider);
-  const modelName = getModelName(provider, false);
-
-  // 系统提示
-  const systemPrompt = `你是一个专业的几何绘图助手，使用 GeoGebra 根据描述绘制几何图形。
-
-## 执行规则（必须遵守）
-1. 理解描述，规划作图步骤
-2. 生成一条 GeoGebra 命令（以 JSON 格式返回）
-3. 等待用户返回执行结果
-4. 如果成功，继续执行下一条命令
-5. 如果失败，分析原因并调整
-6. 所有命令执行完毕后，返回完成状态
-
-## 作图原则
-- 从基础元素开始：先创建点（如 A = (0, 0)）
-- 逐步构建：点 → 线 → 圆 → 多边形
-- 依赖关系：确保引用已创建的元素
-- 一次一条：禁止一次返回多条命令（不要用分号分隔）
-
-## 响应格式
-你必须以 JSON 格式响应，包含以下字段：
-- stepNumber: 当前步骤序号
-- totalSteps: 预计总步骤数
-- command: GeoGebra 命令（仅一条，不要用分号分隔多条命令）
-- description: 命令说明
-- expectedResult: 预期结果
-- isComplete: 是否完成（true/false）
-- finalDescription: 完成时的图形描述（仅 isComplete=true 时需要）
-- finalElements: 完成时的元素列表（仅 isComplete=true 时需要）
-- finalSteps: 完成时的步骤总结（仅 isComplete=true 时需要）
 
 ## GeoGebra 完整命令参考
 
@@ -540,112 +270,326 @@ export async function generateFromDescriptionWithSteps(
 步骤5: s = Polygon(A, B, C, D)
 步骤6: p = PerpendicularLine(E, AB)  // 错误！AB不存在！`;
 
-  // 初始化消息历史
-  type Message = 
-    | { role: "system"; content: string }
-    | { role: "user"; content: string | Array<{ type: "text"; text: string } | { type: "image"; image: string; mediaType: string }> }
-    | { role: "assistant"; content: string };
-  
-  const messages: Message[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: "请根据以下描述绘制几何图形，分步执行：\n\n" + description },
-  ];
-
-  // 存储最终结果
   let finalResult: { description: string; elements: unknown[]; suggestedSteps: string[] } | null = null;
   const allSteps: string[] = [];
-  const allCommands: string[] = []; // 存储所有已执行的命令
+  const allCommands: string[] = [];
   let stepCount = 0;
   const maxSteps = 50;
 
-  // 手动循环执行
+  console.log("\n=== 第 1 步：分析图片 ===");
+
+  const messages: ModelMessage[] = [
+    { role: "system", content: systemPrompt },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: userMessageContent },
+        { type: "image", image: base64Image, mediaType: mimeType },
+      ],
+    },
+  ];
+
   while (stepCount < maxSteps) {
     stepCount++;
-    console.log(`\n=== 开始第 ${stepCount} 步 ===`);
+    console.log(`\n=== 开始第 ${stepCount} 轮调用 ===`);
 
-    // 构建当前消息，包含已创建的对象列表
-    const currentMessages = [...messages];
-    if (allCommands.length > 0) {
-      // 提取所有已定义的变量名
+    const result = await generateText({
+      model: client(modelName),
+      messages,
+      tools: {
+        execute_geo_gebra_step: executeGeoGebraStepTool,
+        complete_geo_gebra_task: completeGeoGebraTaskTool,
+      },
+      toolChoice: useOpenRouter ? "auto" : "required",
+    });
+
+    // 尝试从 toolCalls 获取工具调用
+    let toolCall = result.toolCalls?.[0];
+    
+    // 如果 toolCalls 为空但 result.text 包含工具调用信息，尝试解析
+    if (!toolCall && result.text) {
+      try {
+        // 尝试解析 JSON 格式的工具调用
+        const parsed = JSON.parse(result.text);
+        if (parsed.type === "tool-call" && parsed.toolName) {
+          toolCall = {
+            type: "tool-call",
+            toolCallId: parsed.toolCallId,
+            toolName: parsed.toolName,
+            input: parsed.input,
+          };
+        }
+      } catch {
+        // 如果不是 JSON，可能是普通文本响应
+      }
+    }
+
+    if (!toolCall) {
+      console.error("模型未调用工具，响应:", result.text);
+      throw new Error("模型未返回有效的工具调用");
+    }
+
+    if (toolCall.toolName === "execute_geo_gebra_step") {
+      const args = toolCall.input as {
+        stepNumber: number;
+        totalSteps: number;
+        command: string;
+        description: string;
+        expectedResult: string;
+      };
+
+      console.log(`执行步骤 ${args.stepNumber}/${args.totalSteps}: ${args.command}`);
+      allSteps.push(`${args.stepNumber}. ${args.description}: ${args.command}`);
+      allCommands.push(args.command);
+
+      const executionResult = await onStepExecution({
+        stepNumber: args.stepNumber,
+        totalSteps: args.totalSteps,
+        command: args.command,
+        description: args.description,
+        expectedResult: args.expectedResult,
+      });
+
       const definedVariables = allCommands
         .map(cmd => {
           const match = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
           return match ? match[1] : null;
         })
         .filter(Boolean);
-      
-      currentMessages.push({
-        role: "user" as const,
-        content: `[提醒]已创建的对象：${definedVariables.join(", ")}。请确保只引用这些已定义的对象，不要引用不存在的变量。`,
+
+      messages.push({
+        role: "assistant",
+        content: result.text || JSON.stringify(toolCall),
       });
-    }
 
-    // 调用模型获取下一步
-    const result = await generateText({
-      model: client(modelName),
-      messages: currentMessages,
-    });
+      messages.push({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n已创建的对象：${definedVariables.join(", ") || "无"}。请继续下一步。`,
+          },
+        ],
+      });
+    } else if (toolCall.toolName === "complete_geo_gebra_task") {
+      const args = toolCall.input as {
+        finalDescription: string;
+        finalElements: string[];
+        finalSteps: string[];
+      };
 
-    // 解析模型响应
-    let stepData: {
-      stepNumber: number;
-      totalSteps: number;
-      command: string;
-      description: string;
-      expectedResult: string;
-      isComplete: boolean;
-      finalDescription?: string;
-      finalElements?: unknown[];
-      finalSteps?: string[];
-    };
-
-    try {
-      const jsonMatch = result.text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        stepData = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error("无法解析模型响应");
-      }
-    } catch {
-      console.error("解析响应失败:", result.text);
-      messages.push({ role: "assistant" as const, content: result.text });
-      messages.push({ role: "user" as const, content: "请以上述 JSON 格式返回下一步命令。" });
-      continue;
-    }
-
-    // 检查是否完成
-    if (stepData.isComplete) {
       finalResult = {
-        description: stepData.finalDescription || "绘图完成",
-        elements: stepData.finalElements || [],
-        suggestedSteps: stepData.finalSteps || allSteps,
+        description: args.finalDescription,
+        elements: args.finalElements,
+        suggestedSteps: args.finalSteps,
       };
       break;
     }
+  }
 
-    // 执行命令
-    console.log(`执行步骤 ${stepData.stepNumber}/${stepData.totalSteps}: ${stepData.command}`);
-    allSteps.push(`${stepData.stepNumber}. ${stepData.description}: ${stepData.command}`);
+  if (!finalResult) {
+    throw new Error(`绘图未完成，已达到最大步骤数 (${maxSteps})`);
+  }
 
-    const executionResult = await onStepExecution({
-      stepNumber: stepData.stepNumber,
-      totalSteps: stepData.totalSteps,
-      command: stepData.command,
-      description: stepData.description,
-      expectedResult: stepData.expectedResult,
+  return finalResult;
+}
+
+/**
+ * 根据描述逐步生成 GeoGebra 指令（function calling 模式）
+ */
+export async function generateFromDescriptionWithSteps(
+  description: string,
+  provider: LLMProvider,
+  onStepExecution: StepExecutionCallback
+): Promise<{ description: string; elements: unknown[]; suggestedSteps: string[] }> {
+  const client = createAIClient(provider);
+  const modelName = getModelName(provider, false);
+  const useOpenRouter = isOpenRouterProvider(provider);
+
+  const systemPrompt = `你是一个专业的几何绘图助手，使用 GeoGebra 根据描述绘制几何图形。
+
+## 执行规则（必须遵守）
+1. 理解描述，规划作图步骤
+2. 调用 execute_geo_gebra_step 工具返回当前步骤的命令
+3. 等待执行结果后，继续调用工具返回下一步
+4. 如果执行失败，分析原因并调整命令
+5. 所有命令执行完毕后，调用 complete_geo_gebra_task 工具标记完成
+
+## 作图原则
+- 从基础元素开始：先创建点（如 A = (0, 0)）
+- 逐步构建：点 → 线 → 圆 → 多边形
+- 依赖关系：确保引用已创建的元素
+- 一次一条：禁止一次返回多条命令（不要用分号分隔）
+
+## GeoGebra 完整命令参考
+
+### 点（Point）
+- 自由点：A = (0, 0)  或  B = (3, 4)
+- 线段上的点（可拖动）：E = Point(s)  其中 s 是线段
+- 直线上的点（可拖动）：E = Point(l)  其中 l 是直线
+- 指定位置的点：E = Point(s, 0.5)  参数 0-1 表示在线段上的位置
+- 中点：M = Midpoint(A, B)  或  M = Midpoint(s)
+
+### 线段和直线
+- 线段：s = Segment(A, B)
+- 无限直线：l = Line(A, B)
+- 射线：r = Ray(A, B)
+
+### 垂直线（正确命令）
+- 过点垂直于直线：p = PerpendicularLine(P, l)
+- 过点垂直于线段：p = PerpendicularLine(P, s)
+- 垂足（交点）：F = Intersect(p, s)  或  F = Intersect(p, l)
+
+### 圆
+- 圆心和半径：c = Circle(A, 5)
+- 圆心和过点：c = Circle(A, B)
+- 过三点：c = Circle(A, B, C)
+
+### 多边形
+- 多边形：poly = Polygon(A, B, C, D)
+- 正多边形：poly = Polygon(A, B, 6)  以 AB 为边的六边形
+
+### 交点
+- 两线交点：I = Intersect(l1, l2)
+- 线与圆交点：I = Intersect(l, c)
+- 两圆交点：I = Intersect(c1, c2)
+
+### 角度
+- 角度：α = Angle(A, B, C)  顶点在 B
+- 角度（带方向）：α = Angle(A, B, C, direction)
+
+### 其他常用命令
+- 距离：d = Distance(A, B)
+- 长度：len = Length(s)
+- 面积：area = Area(poly)
+- 斜率：m = Slope(l)
+
+## 重要提示
+- 每个步骤只能包含一条 GeoGebra 命令
+- 错误示例：A = (0, 0); B = (3, 0); C = (3, 3)  （这是三条命令）
+- 正确示例：A = (0, 0)  （这是单条命令）
+
+## 常见错误纠正
+错误: PointOnSegment(A, C)    正确: Point(Segment(A, C)) 或 Point(s)
+错误: PerpendicularFoot(E, l) 正确: Intersect(PerpendicularLine(E, l), l)
+错误: PointOnLine(E, l)       正确: Point(l)
+
+## 关键规则：引用已创建的对象
+必须记住你创建的对象名称，并在后续命令中正确使用。
+创建了 s = Polygon(A, B, C, D) 后，正方形的边不会自动变成 AB、BC、CD、DA
+如果需要使用线段，必须先显式创建：
+正确: AB = Segment(A, B) 然后 PerpendicularLine(E, AB)
+正确: 或者直接使用 PerpendicularLine(E, Segment(A, B))
+错误: 不要假设 AB 自动存在！AB 是一个变量名，除非你创建了它，否则不存在
+
+## 正确的作图流程示例
+步骤1: A = (0, 4)           // 创建点A
+步骤2: B = (0, 0)           // 创建点B  
+步骤3: C = (4, 0)           // 创建点C
+步骤4: D = (4, 4)           // 创建点D
+步骤5: s = Polygon(A, B, C, D)  // 创建多边形s
+步骤6: AB = Segment(A, B)   // 显式创建线段AB
+步骤7: p = PerpendicularLine(E, AB)  // 正确引用线段AB
+
+## 错误示例（不要这样做）
+步骤5: s = Polygon(A, B, C, D)
+步骤6: p = PerpendicularLine(E, AB)  // 错误！AB不存在！`;
+
+  let finalResult: { description: string; elements: unknown[]; suggestedSteps: string[] } | null = null;
+  const allSteps: string[] = [];
+  const allCommands: string[] = [];
+  let stepCount = 0;
+  const maxSteps = 50;
+
+  const messages: ModelMessage[] = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: [{ type: "text", text: "请根据以下描述绘制几何图形，分步执行：\n\n" + description }] },
+  ];
+
+  while (stepCount < maxSteps) {
+    stepCount++;
+    console.log(`\n=== 开始第 ${stepCount} 轮调用 ===`);
+
+    const definedVariables = allCommands
+      .map(cmd => {
+        const match = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+        return match ? match[1] : null;
+      })
+      .filter(Boolean);
+
+    const messagesWithContext: ModelMessage[] = [...messages];
+    if (allCommands.length > 0) {
+      messagesWithContext.push({
+        role: "user",
+        content: [{ type: "text", text: `[提醒]已创建的对象：${definedVariables.join(", ")}。请确保只引用这些已定义的对象，不要引用不存在的变量。` }],
+      });
+    }
+
+    const result = await generateText({
+      model: client(modelName),
+      messages: messagesWithContext,
+      tools: {
+        execute_geo_gebra_step: executeGeoGebraStepTool,
+        complete_geo_gebra_task: completeGeoGebraTaskTool,
+      },
+      toolChoice: useOpenRouter ? "auto" : "required",
     });
 
-    // 将执行结果添加到消息历史
-    messages.push({
-      role: "user" as const,
-      content: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n请继续下一步，以 JSON 格式返回。`,
-    });
+    const toolCall = result.toolCalls?.[0];
+    if (!toolCall) {
+      console.error("模型未调用工具，响应:", result.text);
+      throw new Error("模型未返回有效的工具调用");
+    }
 
-    // 将模型响应添加到消息历史
-    messages.push({
-      role: "assistant" as const,
-      content: result.text,
-    });
+    if (toolCall.toolName === "execute_geo_gebra_step") {
+      const args = toolCall.input as {
+        stepNumber: number;
+        totalSteps: number;
+        command: string;
+        description: string;
+        expectedResult: string;
+      };
+
+      console.log(`执行步骤 ${args.stepNumber}/${args.totalSteps}: ${args.command}`);
+      allSteps.push(`${args.stepNumber}. ${args.description}: ${args.command}`);
+      allCommands.push(args.command);
+
+      const executionResult = await onStepExecution({
+        stepNumber: args.stepNumber,
+        totalSteps: args.totalSteps,
+        command: args.command,
+        description: args.description,
+        expectedResult: args.expectedResult,
+      });
+
+      messages.push({
+        role: "assistant",
+        content: result.text || JSON.stringify(toolCall),
+      });
+
+      messages.push({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n已创建的对象：${definedVariables.join(", ") || "无"}。请继续下一步。`,
+          },
+        ],
+      });
+    } else if (toolCall.toolName === "complete_geo_gebra_task") {
+      const args = toolCall.input as {
+        finalDescription: string;
+        finalElements: string[];
+        finalSteps: string[];
+      };
+
+      finalResult = {
+        description: args.finalDescription,
+        elements: args.finalElements,
+        suggestedSteps: args.finalSteps,
+      };
+      break;
+    }
   }
 
   if (!finalResult) {
@@ -656,6 +600,32 @@ export async function generateFromDescriptionWithSteps(
 }
 
 // ==================== 向后兼容的旧版本 API ====================
+
+// ==================== Function Calling 工具定义 ====================
+
+// 步骤执行工具：模型返回单步命令，等待执行结果
+const executeGeoGebraStepTool = tool({
+  description: "执行单步 GeoGebra 命令。返回当前步骤的命令，等待执行结果后继续下一步。",
+  inputSchema: z.object({
+    stepNumber: z.number().describe("当前步骤序号，从 1 开始"),
+    totalSteps: z.number().describe("预计总步骤数"),
+    command: z.string().describe("GeoGebra 命令，一次只能一条，不要用分号分隔多条"),
+    description: z.string().describe("命令说明，解释这步在做什么"),
+    expectedResult: z.string().describe("预期结果，描述这步完成后应该看到什么"),
+  }),
+  strict: true,
+});
+
+// 完成状态工具：模型返回完成状态
+const completeGeoGebraTaskTool = tool({
+  description: "标记 GeoGebra 绘图任务完成。当所有步骤执行完毕后调用。",
+  inputSchema: z.object({
+    finalDescription: z.string().describe("完成后的图形描述"),
+    finalElements: z.array(z.string()).describe("最终创建的元素名称列表"),
+    finalSteps: z.array(z.string()).describe("步骤总结列表"),
+  }),
+  strict: true,
+});
 
 // 旧版工具定义（用于一次性返回）
 const analyzeGeometryTool = tool({
