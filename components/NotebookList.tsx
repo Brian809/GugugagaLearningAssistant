@@ -26,7 +26,11 @@ const FILTER_OPTIONS: { key: FilterType; label: string }[] = [
   { key: "reviewed", label: "已复习" },
 ];
 
-export default function NotebookList() {
+interface NotebookListProps {
+  onEdit?: (record: MistakeRecord) => void;
+}
+
+export default function NotebookList({ onEdit }: NotebookListProps) {
   const records = useNotebookRecords();
   const isLoading = useNotebookLoading();
   const { loadRecords, searchRecords, setFilter, toggleReviewed, deleteRecord } =
@@ -100,9 +104,10 @@ export default function NotebookList() {
         record={item}
         onToggleReview={handleToggleReview}
         onDelete={handleDelete}
+        onEdit={onEdit}
       />
     ),
-    [handleToggleReview, handleDelete],
+    [handleToggleReview, handleDelete, onEdit],
   );
 
   const renderEmptyState = () => (
