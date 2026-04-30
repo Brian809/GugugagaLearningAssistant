@@ -20,19 +20,20 @@ import MistakeCard from "./MistakeCard";
 
 type FilterType = "all" | "unreviewed" | "reviewed";
 
+interface NotebookListProps {
+  onEdit?: (record: MistakeRecord) => void;
+}
+
 const FILTER_OPTIONS: { key: FilterType; label: string }[] = [
   { key: "all", label: "全部" },
   { key: "unreviewed", label: "未复习" },
   { key: "reviewed", label: "已复习" },
 ];
 
-interface NotebookListProps {
-  onEdit?: (record: MistakeRecord) => void;
-}
-
 export default function NotebookList({ onEdit }: NotebookListProps) {
   const records = useNotebookRecords();
   const isLoading = useNotebookLoading();
+  const error = useNotebookStore((s) => s.error);
   const { loadRecords, searchRecords, setFilter, toggleReviewed, deleteRecord } =
     useNotebookStore();
 
@@ -169,6 +170,27 @@ export default function NotebookList({ onEdit }: NotebookListProps) {
     </View>
   );
 
+  // 错误状态
+  if (error) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.errorState}>
+          <Ionicons name="close-circle" size={48} color="#ff3b30" />
+          <Text style={styles.errorTitle}>加载失败</Text>
+          <Text style={styles.errorMessage}>{error}</Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            activeOpacity={0.7}
+            onPress={handleRefresh}
+          >
+            <Ionicons name="refresh" size={16} color="#fff" />
+            <Text style={styles.retryButtonText}>重试</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <FlatList
@@ -273,5 +295,40 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "rgba(255,255,255,0.6)",
+  },
+  // 错误状态
+  errorState: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 32,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#ff3b30",
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  errorMessage: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  retryButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#fff",
   },
 });

@@ -1,9 +1,16 @@
-import { useEffect } from "react";
-import { StyleSheet, Text, TouchableOpacity, View, ScrollView } from "react-native";
+import { useEffect, useState } from "react";
+import {
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  ScrollView,
+  ActivityIndicator,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useNotebookRecords, useNotebookStore } from "@/stores/notebookStore";
+import { useNotebookRecords, useNotebookStore, useNotebookLoading } from "@/stores/notebookStore";
 
 const FEATURES = [
   {
@@ -38,6 +45,8 @@ export default function LearningScreen() {
   const router = useRouter();
   const records = useNotebookRecords();
   const loadRecords = useNotebookStore((s) => s.loadRecords);
+  const isLoadingRecords = useNotebookLoading();
+  const notebookError = useNotebookStore((s) => s.error);
   const recentRecords = records.slice(0, 3);
 
   useEffect(() => {
@@ -69,7 +78,31 @@ export default function LearningScreen() {
           </TouchableOpacity>
         ))}
 
-        {recentRecords.length > 0 && (
+        {notebookError ? (
+          <View style={styles.recentSection}>
+            <Text style={styles.recentTitle}>最近错题</Text>
+            <View style={styles.errorCard}>
+              <Ionicons name="close-circle" size={20} color="#ff3b30" />
+              <Text style={styles.errorText}>{notebookError}</Text>
+              <TouchableOpacity
+                style={styles.retryButton}
+                activeOpacity={0.7}
+                onPress={() => loadRecords()}
+              >
+                <Ionicons name="refresh" size={16} color="#fff" />
+                <Text style={styles.retryButtonText}>重试</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : isLoadingRecords ? (
+          <View style={styles.recentSection}>
+            <Text style={styles.recentTitle}>最近错题</Text>
+            <View style={styles.loadingCard}>
+              <ActivityIndicator size="small" color="#007AFF" />
+              <Text style={styles.loadingText}>加载中...</Text>
+            </View>
+          </View>
+        ) : recentRecords.length > 0 ? (
           <View style={styles.recentSection}>
             <Text style={styles.recentTitle}>最近错题</Text>
             {recentRecords.map((record) => (
@@ -97,7 +130,7 @@ export default function LearningScreen() {
               </TouchableOpacity>
             ))}
           </View>
-        )}
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -205,5 +238,50 @@ const styles = StyleSheet.create({
   subjectText: {
     fontSize: 12,
     color: "#666",
+  },
+  // 错误状态
+  errorCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#ffcdd2",
+    alignItems: "center",
+  },
+  errorText: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    lineHeight: 20,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  retryButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#fff",
+  },
+  // 加载状态
+  loadingCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: "#999",
   },
 });
