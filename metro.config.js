@@ -1,4 +1,7 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const config = getDefaultConfig(__dirname);
+
+// Support .sql files for Drizzle ORM migrations
 config.resolver.sourceExts.push('sql');
+
 module.exports = config;
