@@ -1,0 +1,15 @@
+Unit test result: PASS
+Command: bun test
+Runtime: bun v1.3.11
+Date: 2026-04-30
+
+Results:
+  - 33 pass
+  - 0 fail
+  - 128 expect() calls
+  - 281.00ms runtime
+
+Files:
+  - __tests__/notebookStore.test.ts   (notebookStore CRUD contract)
+  - __tests__/StepVisualizer.test.ts  (StepVisualizer helpers)
+  - __tests__/solveAgent.test.ts      (solveAgent exports and types)

@@ -33,6 +33,7 @@ import { useRouter } from "expo-router";
 import { solveProblem, SolveStep, SolveResult } from "../utils/solveAgent";
 import { useExplainChat, ChatMessage } from "../utils/useExplainChat";
 import { LLMProvider } from "../utils/llmProviders";
+import NotebookForm from "./NotebookForm";
 
 // ==================== 类型定义 ====================
 
@@ -61,6 +62,7 @@ export default function ChatPanel({ mode, provider, image: externalImage }: Chat
   // 解题模式状态
   const [steps, setSteps] = useState<SolveStep[]>([]);
   const [solveResult, setSolveResult] = useState<SolveResult | null>(null);
+  const [notebookVisible, setNotebookVisible] = useState(false);
 
   // 讲解模式 Hook
   const explainChat = useExplainChat(provider);
@@ -258,6 +260,16 @@ export default function ChatPanel({ mode, provider, image: externalImage }: Chat
                 <Text style={styles.solutionType}>{solveResult.solutionType}</Text>
                 <Text style={styles.stepCount}>共 {solveResult.steps.length} 步</Text>
               </View>
+
+              {/* 保存到错题本按钮 */}
+              <TouchableOpacity
+                style={styles.saveButton}
+                activeOpacity={0.7}
+                onPress={() => setNotebookVisible(true)}
+              >
+                <Ionicons name="bookmark-outline" size={18} color="#fff" />
+                <Text style={styles.saveButtonText}>保存到错题本</Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -348,6 +360,19 @@ export default function ChatPanel({ mode, provider, image: externalImage }: Chat
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+
+        {/* 错题本表单 Modal */}
+        <NotebookForm
+          visible={notebookVisible}
+          onClose={() => setNotebookVisible(false)}
+          prefill={{
+            problemText: inputText,
+            correctAnswer: solveResult?.finalAnswer,
+            analysis: solveResult?.steps
+              ?.map((s) => `步骤 ${s.stepNumber}: ${s.description}`)
+              .join("\n"),
+          }}
+        />
       </View>
     );
   }
@@ -724,6 +749,21 @@ const styles = StyleSheet.create({
   stepCount: {
     fontSize: 12,
     color: "#666",
+  },
+  saveButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#2e7d32",
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginTop: 14,
+  },
+  saveButtonText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
   },
 
   // ===== 错误卡片 =====

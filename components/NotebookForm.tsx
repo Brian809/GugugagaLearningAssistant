@@ -83,9 +83,6 @@ export default function NotebookForm({
     if (!problemText.trim()) {
       newErrors.problemText = "请输入题目内容";
     }
-    if (!userAnswer.trim()) {
-      newErrors.userAnswer = "请输入你的答案";
-    }
     if (!correctAnswer.trim()) {
       newErrors.correctAnswer = "请输入正确答案";
     }
