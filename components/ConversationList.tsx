@@ -13,8 +13,8 @@ import {
   useConversationStore,
   useConversationList,
   useActiveConversationId,
-} from "../stores/conversationStore";
-import { Conversation } from "../db/schema";
+} from "@/stores/conversationStore";
+import { Conversation } from "@/db/schema";
 
 interface ConversationListProps {
   visible: boolean;

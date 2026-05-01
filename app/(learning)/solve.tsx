@@ -24,15 +24,15 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import ChatPanel from "../../components/ChatPanel";
-import StepVisualizer from "../../components/StepVisualizer";
-import NotebookForm from "../../components/NotebookForm";
-import ConversationList from "../../components/ConversationList";
+import ChatPanel from "@/components/ChatPanel";
+import StepVisualizer from "@/components/StepVisualizer";
+import NotebookForm from "@/components/NotebookForm";
+import ConversationList from "@/components/ConversationList";
 import {
   useActiveLLMProvider,
   useLLMProvidersLoading,
-} from "../../stores/llmProviderStore";
-import { useConversationStore } from "../../stores/conversationStore";
+} from "@/stores/llmProviderStore";
+import { useConversationStore } from "@/stores/conversationStore";
 import {
   solveProblem,
   SolveStep,

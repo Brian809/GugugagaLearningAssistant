@@ -24,8 +24,8 @@ import {
   type GeoGebraStep,
 } from "../../utils/geogebraAgent";
 import { useActiveLLMProvider, useLLMProviderStore } from "../../stores/llmProviderStore";
-import { useConversationStore } from "../../stores/conversationStore";
-import ConversationList from "../../components/ConversationList";
+import { useConversationStore } from "@/stores/conversationStore";
+import ConversationList from "@/components/ConversationList";
 
 // 全局类型声明
 declare global {

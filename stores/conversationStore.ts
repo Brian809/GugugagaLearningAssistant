@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { Platform } from "react-native";
-import { Conversation, NewConversation } from "../db/schema";
+import { Conversation, NewConversation } from "@/db/schema";
 
 interface ConversationState {
   conversations: Conversation[];

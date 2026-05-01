@@ -2,13 +2,13 @@ import React, { useState } from "react";
 import { StyleSheet, View, TouchableOpacity, Text } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import ChatPanel from "../../components/ChatPanel";
-import ConversationList from "../../components/ConversationList";
+import ChatPanel from "@/components/ChatPanel";
+import ConversationList from "@/components/ConversationList";
 import {
   useActiveLLMProvider,
   useLLMProvidersLoading,
-} from "../../stores/llmProviderStore";
-import { useConversationStore } from "../../stores/conversationStore";
+} from "@/stores/llmProviderStore";
+import { useConversationStore } from "@/stores/conversationStore";
 import { ActivityIndicator } from "react-native";
 
 export default function ExplainPage() {
