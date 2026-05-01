@@ -42,6 +42,80 @@ type CommandResult = {
   error?: string;
 };
 
+/** 颜色名 → RGB(0-255) 查找表 */
+const COLOR_NAME_MAP: Record<string, [number, number, number]> = {
+  black: [0, 0, 0],
+  "dark gray": [64, 64, 64],
+  gray: [128, 128, 128],
+  grey: [128, 128, 128],
+  "light gray": [192, 192, 192],
+  silver: [192, 192, 192],
+  white: [255, 255, 255],
+  "dark blue": [0, 0, 128],
+  blue: [0, 0, 255],
+  "dark green": [0, 128, 0],
+  green: [0, 255, 0],
+  maroon: [128, 0, 0],
+  crimson: [220, 20, 60],
+  red: [255, 0, 0],
+  magenta: [255, 0, 255],
+  indigo: [75, 0, 130],
+  purple: [128, 0, 128],
+  brown: [139, 69, 19],
+  orange: [255, 165, 0],
+  gold: [255, 215, 0],
+  lime: [0, 255, 0],
+  cyan: [0, 255, 255],
+  turquoise: [64, 224, 208],
+  "light blue": [173, 216, 230],
+  aqua: [0, 255, 255],
+  pink: [255, 192, 203],
+  violet: [238, 130, 238],
+  yellow: [255, 255, 0],
+};
+
+/**
+ * 解析 SetColor 的颜色参数为 RGB(0-255) 三元组
+ * 支持: 颜色名 "red"、hex "#FF0000"、RGB 浮点 1,0,0 或 0.5,0.5,0.5
+ */
+function parseSetColorArg(arg: string): [number, number, number] {
+  const s = arg.trim();
+  // 去除引号
+  const unquoted = s.replace(/^["'](.*)["']$/, "$1").trim();
+
+  // 1. 颜色名
+  const lc = unquoted.toLowerCase();
+  if (COLOR_NAME_MAP[lc]) return COLOR_NAME_MAP[lc];
+
+  // 2. Hex #RRGGBB 或 #AARRGGBB
+  if (/^#[0-9A-Fa-f]{6,8}$/.test(unquoted)) {
+    const hex = unquoted.substring(1);
+    let r: number, g: number, b: number;
+    if (hex.length === 8) {
+      r = parseInt(hex.substring(2, 4), 16);
+      g = parseInt(hex.substring(4, 6), 16);
+      b = parseInt(hex.substring(6, 8), 16);
+    } else {
+      r = parseInt(hex.substring(0, 2), 16);
+      g = parseInt(hex.substring(2, 4), 16);
+      b = parseInt(hex.substring(4, 6), 16);
+    }
+    return [r, g, b];
+  }
+
+  // 3. RGB 浮点值 "0.5, 0.5, 0.5" → 转为 0-255
+  const parts = s
+    .split(",")
+    .map((p) => parseFloat(p.trim()));
+  if (parts.length === 3 && parts.every((p) => !isNaN(p))) {
+    return parts.map((p) =>
+      Math.round(Math.max(0, Math.min(1, p)) * 255)
+    ) as [number, number, number];
+  }
+
+  throw new Error(`无法解析颜色: ${arg}`);
+}
+
 // GeoGebra 嵌入 URL - 使用 API 版本以获得更好的控制
 const GEOGEBRA_URL = "https://www.geogebra.org/classic#geometry";
 
@@ -1017,21 +1091,33 @@ export default function GeoGebraScreen() {
             let failedCmd = "";
             try {
               for (const cmd of subCommands) {
+                // SetColor 使用 JS API setColor() 避免 evalCommand 对颜色命令返回值不稳定
+                const setColorMatch = cmd.match(
+                  /^SetColou?r\s*\(\s*(\w[\w.]*)\s*,\s*(.+?)\s*\)$/i
+                );
+                if (
+                  setColorMatch &&
+                  typeof ggbAppletInstance.setColor === "function"
+                ) {
+                  try {
+                    const [r, g, b] = parseSetColorArg(setColorMatch[2]);
+                    ggbAppletInstance.setColor(setColorMatch[1], r, g, b);
+                    continue; // 跳过 evalCommand，已通过 JS API 执行
+                  } catch {
+                    // 解析失败，回退到 evalCommand
+                  }
+                }
+
                 const evalOk: boolean = ggbAppletInstance.evalCommand(cmd);
-                // 即使 evalCommand 返回 true，也验证赋值命令是否真的创建了对象
                 const assignMatch = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
                 let objectCreated = true;
                 if (assignMatch && typeof ggbAppletInstance.getObjectType === "function") {
                   const varName = assignMatch[1];
                   if (!cmd.trim().startsWith("Delete")) {
                     const objType = ggbAppletInstance.getObjectType(varName);
-                    if (!objType) {
-                      objectCreated = false;
-                    }
+                    if (!objType) objectCreated = false;
                   }
                 }
-                // evalCommand 对 SetColor/SetVisible 等视觉命令可能返回 undefined
-                // 只有明确返回 false 才判为失败
                 if (evalOk === false || !objectCreated) {
                   allOk = false;
                   failedCmd = cmd;
@@ -1042,12 +1128,10 @@ export default function GeoGebraScreen() {
               console.error = origError;
             }
 
-            // 构建错误描述（含 GeoGebra 内部错误文本）
             const geoErrorText = capturedErrors.length > 0
               ? capturedErrors.join("; ").substring(0, 300)
               : "";
 
-            // 二次验证：如果没有任何新对象产生且没有可见效果
             const afterCount: number =
               typeof ggbAppletInstance.getObjectNumber === "function"
                 ? ggbAppletInstance.getObjectNumber()

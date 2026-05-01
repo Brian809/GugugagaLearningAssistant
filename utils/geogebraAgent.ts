@@ -266,14 +266,25 @@ export function generateMobileCommandScript(command: string): string {
     return `(function(){try{window.ReactNativeWebView.postMessage(JSON.stringify({type:"commandResult",success:false,error:"Empty command"}));}catch(e){}})();`;
   }
 
-  // 生成每条命令的执行代码（含 console.error 捕获和对象创建验证）
+  // 生成每条命令的执行代码
   const execStatements = commands
-    .map((cmd, i) => {
+    .map((cmd) => {
       const escaped = cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       const safeDisplay = cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       const assignCheck = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(cmd.trim());
       const varName = assignCheck && !cmd.trim().startsWith("Delete") ? assignCheck[1] : null;
-      // 用临时变量存 console.error 返回值以便捕获错误文本
+      // SetColor 用 JS API setColor() 避免 evalCommand 对颜色命令不稳定
+      if (/^SetColou?r\s*\(/i.test(cmd.trim())) {
+        let stmt = `{try{`;
+        stmt += `var m="${escaped}".match(/^SetColou?r\\s*\\(\\s*(\\w[\\w.]*)\\s*,\\s*(.+?)\\s*\\)$/i);`;
+        stmt += `if(m&&ggbApplet.setColor){`;
+        stmt += `var rgb=_parseColor(m[2]);`;
+        stmt += `if(rgb)ggbApplet.setColor(m[1],rgb[0],rgb[1],rgb[2]);`;
+        stmt += `}else{ggbApplet.evalCommand("${escaped}");}`;
+        stmt += `}catch(e){ggbApplet.evalCommand("${escaped}");}}`;
+        return stmt;
+      }
+      // 常规命令走 evalCommand
       let stmt = `{var _oe=console.error;var _ce="";console.error=function(){_ce+=Array.prototype.slice.call(arguments).join(" ");_oe.apply(console,arguments);};`;
       stmt += `r=ggbApplet.evalCommand("${escaped}");`;
       stmt += `console.error=_oe;`;
@@ -286,6 +297,18 @@ export function generateMobileCommandScript(command: string): string {
     })
     .join("");
 
+  // JS 端颜色解析函数（注入到 WebView 中）
+  const colorParser = (
+    `function _parseColor(s){s=s.replace(/^[\"']|[\"']$/g,'').trim();` +
+    `var m={black:[0,0,0],'dark gray':[64,64,64],gray:[128,128,128],grey:[128,128,128],'light gray':[192,192,192],white:[255,255,255],'dark blue':[0,0,128],blue:[0,0,255],'dark green':[0,128,0],green:[0,255,0],maroon:[128,0,0],crimson:[220,20,60],red:[255,0,0],magenta:[255,0,255],indigo:[75,0,130],purple:[128,0,128],brown:[139,69,19],orange:[255,165,0],gold:[255,215,0],lime:[0,255,0],cyan:[0,255,255],turquoise:[64,224,208],'light blue':[173,216,230],aqua:[0,255,255],pink:[255,192,203],violet:[238,130,238],yellow:[255,255,0]};` +
+    `if(m[s.toLowerCase()])return m[s.toLowerCase()];` +
+    `if(/^#[0-9A-Fa-f]{6,8}$/.test(s)){var h=s.substring(1);var o=h.length===8?2:0;return[parseInt(h.substring(o,o+2),16),parseInt(h.substring(o+2,o+4),16),parseInt(h.substring(o+4,o+6),16)];}` +
+    `var p=s.split(',').map(parseFloat);` +
+    `if(p.length===3&&p.every(function(x){return!isNaN(x)})){return p.map(function(x){return Math.round(Math.max(0,Math.min(1,x))*255)});}` +
+    `return null;}` +
+    `var _oe2=console.error;var _ce2="";console.error=function(){_ce2+=Array.prototype.slice.call(arguments).join(" ");_oe2.apply(console,arguments);};`
+  );
+
   const beforeCount = `var bc=typeof ggbApplet.getObjectNumber==="function"?ggbApplet.getObjectNumber():0;`;
   const afterCheck = `var ac=typeof ggbApplet.getObjectNumber==="function"?ggbApplet.getObjectNumber():0;`;
   const firstEscaped = commands[0].replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -294,6 +317,7 @@ export function generateMobileCommandScript(command: string): string {
   return (
     `(function(){try{` +
     `if(typeof ggbApplet!=="undefined"&&ggbApplet.evalCommand){` +
+    colorParser +
     `var ok=true;var err="";var r;` +
     beforeCount +
     execStatements +
