@@ -23,6 +23,69 @@ export type GeoGebraStep = {
 export type StepExecutionCallback = (step: GeoGebraStep) => Promise<{ success: boolean; error?: string }>;
 
 /**
+ * 从 AI 响应中提取工具调用
+ *
+ * AI SDK 的 toolCalls 有时会为空（特别是 OpenRouter 可能将工具调用
+ * 以 JSON 文本形式返回）。此函数尝试多种方式提取工具调用：
+ * 1. AI SDK 的 result.toolCalls
+ * 2. 纯 JSON 文本
+ * 3. Markdown 代码块包裹的 JSON (```json ... ```)
+ * 4. 嵌入文本中的 JSON 对象
+ */
+function extractToolCall(result: {
+  toolCalls?: any[];
+  text?: string;
+}): { type: string; toolCallId: string; toolName: string; input: any } | null {
+  // 方式 1：AI SDK 原生 toolCalls
+  if (result.toolCalls?.[0]) {
+    return result.toolCalls[0];
+  }
+
+  const text = result.text;
+  if (!text) return null;
+
+  let jsonStr: string | null = null;
+
+  // 方式 2：整个文本就是 JSON
+  try {
+    JSON.parse(text);
+    jsonStr = text;
+  } catch {
+    // 方式 3：Markdown 代码块 ```json ... ```
+    const mdMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (mdMatch) {
+      jsonStr = mdMatch[1].trim();
+    }
+  }
+
+  // 方式 4：在文本中查找 {"type":"tool-call"...} 模式的 JSON 对象
+  if (!jsonStr) {
+    const objMatch = text.match(/\{\s*"type"\s*:\s*"tool-call"[\s\S]*?\n?\}/);
+    if (objMatch) {
+      jsonStr = objMatch[0];
+    }
+  }
+
+  if (!jsonStr) return null;
+
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (parsed.type === "tool-call" && parsed.toolName) {
+      return {
+        type: "tool-call",
+        toolCallId: parsed.toolCallId || `call_${Date.now()}`,
+        toolName: parsed.toolName,
+        input: parsed.input,
+      };
+    }
+  } catch {
+    // JSON 解析失败
+  }
+
+  return null;
+}
+
+/**
  * 将图片转换为 base64 格式
  */
 export async function imageToBase64(uri: string): Promise<string> {
@@ -92,6 +155,52 @@ ${commandCalls}
   }
 })();
   `.trim();
+}
+
+/**
+ * 生成移动端命令注入脚本（带 postMessage 反馈）
+ *
+ * 移动端 injectJavaScript 是 fire-and-forget，无法获取返回值。
+ * 此函数生成一个 IIFE，在 WebView 中执行每个 evalCommand，
+ * 检查其返回值，并通过 window.ReactNativeWebView.postMessage
+ * 将执行结果发送回 React Native 层。
+ */
+export function generateMobileCommandScript(command: string): string {
+  const cleanCommand = command.trim();
+  const effectiveCommand = cleanCommand.startsWith("=")
+    ? cleanCommand.substring(1).trim()
+    : cleanCommand;
+
+  const commands = effectiveCommand
+    .split(/[;\n]/)
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+
+  if (commands.length === 0) {
+    return `(function(){try{window.ReactNativeWebView.postMessage(JSON.stringify({type:"commandResult",success:false,error:"Empty command"}));}catch(e){}})();`;
+  }
+
+  const execStatements = commands
+    .map((cmd) => {
+      const escaped = cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const safeDisplay = cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      return (
+        `r=ggbApplet.evalCommand("${escaped}");` +
+        `if(r!==true){ok=false;err="Command failed: ${safeDisplay}";}`
+      );
+    })
+    .join("");
+
+  return (
+    `(function(){try{` +
+    `if(typeof ggbApplet!=="undefined"&&ggbApplet.evalCommand){` +
+    `var ok=true;var err="";var r;` +
+    execStatements +
+    `ggbApplet.refreshViews();` +
+    `try{window.ReactNativeWebView.postMessage(JSON.stringify({type:"commandResult",success:ok,error:ok?undefined:err}));}catch(e){}` +
+    `}else{try{window.ReactNativeWebView.postMessage(JSON.stringify({type:"commandResult",success:false,error:"ggbApplet not available"}));}catch(e){}}` +
+    `}catch(e){try{window.ReactNativeWebView.postMessage(JSON.stringify({type:"commandResult",success:false,error:e.toString()}));}catch(e2){}}})();`
+  );
 }
 
 /**
@@ -253,30 +362,24 @@ export async function analyzeImageWithSteps(
       abortSignal: signal,
     });
 
-    // 尝试从 toolCalls 获取工具调用
-    let toolCall = result.toolCalls?.[0];
-    
-    // 如果 toolCalls 为空但 result.text 包含工具调用信息，尝试解析
-    if (!toolCall && result.text) {
-      try {
-        // 尝试解析 JSON 格式的工具调用
-        const parsed = JSON.parse(result.text);
-        if (parsed.type === "tool-call" && parsed.toolName) {
-          toolCall = {
-            type: "tool-call",
-            toolCallId: parsed.toolCallId,
-            toolName: parsed.toolName,
-            input: parsed.input,
-          };
-        }
-      } catch {
-        // 如果不是 JSON，可能是普通文本响应
-      }
-    }
+    const toolCall = extractToolCall(result);
 
     if (!toolCall) {
-      console.error("模型未调用工具，响应:", result.text);
-      throw new Error("模型未返回有效的工具调用");
+      // 模型没有调用工具，给一次纠正机会
+      const responseText = result.text || "(无响应)";
+      console.warn("模型未调用工具，响应:", responseText.substring(0, 200));
+      messages.push({
+        role: "assistant",
+        content: responseText,
+      });
+      messages.push({
+        role: "user",
+        content: [{
+          type: "text",
+          text: "你没有调用任何工具。请调用 execute_geo_gebra_step 执行下一步绘图命令，或调用 complete_geo_gebra_task 表示任务完成。如果你已完成所有步骤，请调用 complete_geo_gebra_task。",
+        }],
+      });
+      continue;
     }
 
     if (toolCall.toolName === "execute_geo_gebra_step") {
@@ -501,10 +604,23 @@ export async function generateFromDescriptionWithSteps(
       abortSignal: signal,
     });
 
-    const toolCall = result.toolCalls?.[0];
+    const toolCall = extractToolCall(result);
+
     if (!toolCall) {
-      console.error("模型未调用工具，响应:", result.text);
-      throw new Error("模型未返回有效的工具调用");
+      const responseText = result.text || "(无响应)";
+      console.warn("模型未调用工具，响应:", responseText.substring(0, 200));
+      messages.push({
+        role: "assistant",
+        content: responseText,
+      });
+      messages.push({
+        role: "user",
+        content: [{
+          type: "text",
+          text: "你没有调用任何工具。请调用 execute_geo_gebra_step 执行下一步绘图命令，或调用 complete_geo_gebra_task 表示任务完成。如果你已完成所有步骤，请调用 complete_geo_gebra_task。",
+        }],
+      });
+      continue;
     }
 
     if (toolCall.toolName === "execute_geo_gebra_step") {

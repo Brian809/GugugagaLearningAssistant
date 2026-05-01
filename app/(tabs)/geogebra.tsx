@@ -20,6 +20,7 @@ import {
   analyzeImageWithSteps,
   generateFromDescriptionWithSteps,
   generateSingleStepScript,
+  generateMobileCommandScript,
   type GeoGebraStep,
 } from "../../utils/geogebraAgent";
 import { useActiveLLMProvider, useLLMProviderStore } from "../../stores/llmProviderStore";
@@ -33,6 +34,11 @@ declare global {
     ggbApplet: any;
   }
 }
+
+type CommandResult = {
+  success: boolean;
+  error?: string;
+};
 
 // GeoGebra 嵌入 URL - 使用 API 版本以获得更好的控制
 const GEOGEBRA_URL = "https://www.geogebra.org/classic#geometry";
@@ -84,10 +90,10 @@ function ToolButton({
 // AI 对话框组件
 function AIChatPanel({
   webViewRef,
-  onExecuteCommand,
+  executeGeoGebraCommand,
 }: {
   webViewRef: React.RefObject<any>;
-  onExecuteCommand?: (script: string) => void;
+  executeGeoGebraCommand: (command: string) => Promise<CommandResult>;
 }) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -177,19 +183,10 @@ function AIChatPanel({
   // 逐步执行回调
   const handleStepExecution = useCallback(async (step: GeoGebraStep) => {
     try {
-      // 1. 生成注入脚本
-      const script = generateSingleStepScript(step.command);
+      // 1. 执行命令并等待实际结果
+      const result = await executeGeoGebraCommand(step.command);
 
-      // 2. 注入到 WebView/iframe 执行
-      if (Platform.OS === "web" && onExecuteCommand) {
-        // Web 端通过回调函数
-        onExecuteCommand(script);
-      } else if (webViewRef.current) {
-        // 移动端通过 injectJavaScript
-        webViewRef.current.injectJavaScript(script);
-      }
-
-      // 3. 添加步骤消息到聊天界面
+      // 2. 添加步骤消息到聊天界面
       addMessage({
         id: Date.now().toString(),
         role: "step",
@@ -203,17 +200,17 @@ function AIChatPanel({
       setCurrentStep(step.stepNumber);
       setTotalSteps(step.totalSteps);
 
-      // 4. 延迟让用户看到效果
+      // 3. 短暂延迟让用户看到画布效果
       await new Promise((resolve) => setTimeout(resolve, 800));
 
-      // 5. 返回执行结果（必须匹配 outputSchema）
-      return { success: true };
+      // 4. 返回实际执行结果（非硬编码的 success）
+      return result;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "执行失败";
       console.error("步骤执行错误:", errorMessage);
       return { success: false, error: errorMessage };
     }
-  }, [webViewRef, onExecuteCommand, addMessage]);
+  }, [executeGeoGebraCommand, addMessage]);
 
   const cancelGeneration = useCallback(() => {
     if (abortRef.current) {
@@ -474,11 +471,7 @@ let ggbAppletInstance: any = null;
 let pendingCommands: string[] = [];
 
 // Web 端使用的 GeoGebra 组件
-function GeoGebraWebView({
-  injectScript,
-}: {
-  injectScript?: string;
-}) {
+function GeoGebraWebView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const appletRef = useRef<any>(null);
   const [isReady, setIsReady] = useState(false);
@@ -589,7 +582,14 @@ function GeoGebraWebView({
           // 执行待处理的命令
           while (pendingCommands.length > 0) {
             const cmd = pendingCommands.shift();
-            if (cmd) executeCommand(cmd);
+            if (cmd) {
+              try {
+                ggb.evalCommand(cmd);
+                ggb.refreshViews();
+              } catch (e) {
+                console.error("Failed to execute pending command:", e);
+              }
+            }
           }
         }
         
@@ -603,35 +603,6 @@ function GeoGebraWebView({
       return () => clearInterval(checkAppletReady);
     }
   }, []);
-
-  // 处理注入脚本
-  React.useEffect(() => {
-    if (!injectScript) return;
-
-    // 从脚本中提取命令
-    const commandMatch = injectScript.match(/ggbApplet\.evalCommand\("(.+?)"\)/);
-    if (commandMatch && commandMatch[1]) {
-      const command = commandMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-      
-      if (ggbAppletInstance && ggbAppletInstance.evalCommand) {
-        executeCommand(command);
-      } else {
-        pendingCommands.push(command);
-      }
-    }
-  }, [injectScript]);
-
-  const executeCommand = (command: string) => {
-    try {
-      if (ggbAppletInstance && ggbAppletInstance.evalCommand) {
-        ggbAppletInstance.evalCommand(command);
-        ggbAppletInstance.refreshViews();
-        console.log("Executed command:", command);
-      }
-    } catch (e) {
-      console.error("Failed to execute command:", e);
-    }
-  };
 
   return (
     <View style={styles.webviewContainer}>
@@ -881,10 +852,10 @@ const GEOGEBRA_HTML = `
 // GeoGebra 画板组件
 function GeoGebraPanel({
   webViewRef,
-  injectScript,
+  onCommandResult,
 }: {
   webViewRef: React.RefObject<any>;
-  injectScript?: string;
+  onCommandResult?: (result: CommandResult) => void;
 }) {
   const [isAppletReady, setIsAppletReady] = useState(false);
 
@@ -899,11 +870,13 @@ function GeoGebraPanel({
         console.log("[GGB WebView]", data.message);
       } else if (data.type === "error") {
         console.error("[GGB WebView Error]", data.message);
+      } else if (data.type === "commandResult" && onCommandResult) {
+        onCommandResult({ success: data.success, error: data.error });
       }
     } catch (e) {
       console.log("[GGB] WebView message:", event.nativeEvent.data);
     }
-  }, []);
+  }, [onCommandResult]);
 
   // 处理 WebView 加载事件
   const handleLoadStart = useCallback(() => {
@@ -922,33 +895,6 @@ function GeoGebraPanel({
     console.error("[GGB] WebView HTTP error:", event.nativeEvent);
   }, []);
 
-  // 处理注入脚本 - 提取并执行命令
-  useEffect(() => {
-    if (!injectScript || !webViewRef.current) return;
-
-    // 从脚本中提取命令
-    const commandMatch = injectScript.match(/ggbApplet\.evalCommand\("(.+?)"\)/);
-    if (commandMatch && commandMatch[1]) {
-      const command = commandMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-      const jsCode = `
-        (function() {
-          try {
-            var cmd = "${command.replace(/"/g, '\\"')}";
-            if (window.ggbApplet && window.ggbApplet.evalCommand) {
-              window.ggbApplet.evalCommand(cmd);
-              window.ggbApplet.refreshViews();
-            }
-            return true;
-          } catch(e) {
-            console.error(e);
-            return false;
-          }
-        })()
-      `;
-      webViewRef.current.injectJavaScript(jsCode);
-    }
-  }, [injectScript, webViewRef]);
-
   return (
     <View style={styles.geogebraContainer}>
       <View style={styles.geogebraHeader}>
@@ -956,7 +902,7 @@ function GeoGebraPanel({
         <Text style={styles.geogebraTitle}>GeoGebra 画板</Text>
       </View>
       {Platform.OS === "web" ? (
-        <GeoGebraWebView injectScript={injectScript} />
+        <GeoGebraWebView />
       ) : (
         WebView && (
           <View style={styles.webviewWrapper}>
@@ -1002,13 +948,110 @@ export default function GeoGebraScreen() {
   const isLandscape = width > height;
   const isLargeScreen = width >= 768;
   const webViewRef = useRef<any>(null);
-  
-  // 管理要注入 GeoGebra 的脚本
-  const [injectScript, setInjectScript] = useState<string | undefined>(undefined);
 
-  // 处理命令执行
-  const handleExecuteCommand = useCallback((script: string) => {
-    setInjectScript(script);
+  // 移动端命令结果桥接：postMessage → Promise
+  const pendingCommandRef = useRef<{
+    resolve: (result: CommandResult) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+
+  // 统一的命令执行函数（Web + 移动端）
+  const executeGeoGebraCommand = useCallback(
+    async (command: string): Promise<CommandResult> => {
+      if (Platform.OS === "web") {
+        // Web：直接同步调用 ggbAppletInstance
+        if (
+          ggbAppletInstance &&
+          typeof ggbAppletInstance.evalCommand === "function"
+        ) {
+          try {
+            // 分割多命令
+            const subCommands = command
+              .split(/[;\n]/)
+              .map((c) => c.trim())
+              .filter((c) => c.length > 0);
+
+            let allOk = true;
+            let failedCmd = "";
+            for (const cmd of subCommands) {
+              const ok: boolean = ggbAppletInstance.evalCommand(cmd);
+              if (!ok) {
+                allOk = false;
+                failedCmd = cmd;
+              }
+            }
+            ggbAppletInstance.refreshViews();
+            return {
+              success: allOk,
+              error: allOk ? undefined : `命令执行失败: ${failedCmd}`,
+            };
+          } catch (e: any) {
+            console.error("GeoGebra command error:", e);
+            return {
+              success: false,
+              error: e?.message || String(e),
+            };
+          }
+        } else {
+          // Applet 尚未就绪，加入待执行队列
+          pendingCommands.push(command);
+          return { success: true };
+        }
+      } else {
+        // 移动端：注入脚本 → postMessage → Promise
+        return new Promise<CommandResult>((resolve, reject) => {
+          // 清除上一次挂起的命令
+          if (pendingCommandRef.current) {
+            clearTimeout(pendingCommandRef.current.timer);
+            pendingCommandRef.current.reject(new Error("命令已被取代"));
+          }
+
+          // 8 秒超时
+          const timer = setTimeout(() => {
+            if (pendingCommandRef.current) {
+              pendingCommandRef.current = null;
+              reject(new Error(`命令执行超时: ${command}`));
+            }
+          }, 8000);
+
+          pendingCommandRef.current = { resolve, reject, timer };
+
+          if (webViewRef.current) {
+            const script = generateMobileCommandScript(command);
+            webViewRef.current.injectJavaScript(script);
+          } else {
+            clearTimeout(timer);
+            pendingCommandRef.current = null;
+            reject(new Error("WebView 不可用"));
+          }
+        });
+      }
+    },
+    []
+  );
+
+  // 移动端命令结果回调（由 GeoGebraPanel.handleMessage 触发）
+  const onCommandResult = useCallback(
+    (result: CommandResult) => {
+      if (pendingCommandRef.current) {
+        clearTimeout(pendingCommandRef.current.timer);
+        pendingCommandRef.current.resolve(result);
+        pendingCommandRef.current = null;
+      }
+    },
+    []
+  );
+
+  // 组件卸载时清理挂起的命令
+  useEffect(() => {
+    return () => {
+      if (pendingCommandRef.current) {
+        clearTimeout(pendingCommandRef.current.timer);
+        pendingCommandRef.current.reject(new Error("组件已卸载"));
+        pendingCommandRef.current = null;
+      }
+    };
   }, []);
 
   // 大屏幕使用左右布局，小屏幕使用上下布局
@@ -1021,15 +1064,15 @@ export default function GeoGebraScreen() {
         >
           <View style={styles.horizontalContainer}>
             <View style={[styles.leftPanel, { width: width * 0.35 }]}>
-              <AIChatPanel 
-                webViewRef={webViewRef} 
-                onExecuteCommand={handleExecuteCommand}
+              <AIChatPanel
+                webViewRef={webViewRef}
+                executeGeoGebraCommand={executeGeoGebraCommand}
               />
             </View>
             <View style={[styles.rightPanel, { width: width * 0.65 }]}>
-              <GeoGebraPanel 
-                webViewRef={webViewRef} 
-                injectScript={injectScript}
+              <GeoGebraPanel
+                webViewRef={webViewRef}
+                onCommandResult={onCommandResult}
               />
             </View>
           </View>
@@ -1047,15 +1090,15 @@ export default function GeoGebraScreen() {
       >
         <View style={styles.verticalContainer}>
           <View style={styles.topPanel}>
-            <GeoGebraPanel 
-              webViewRef={webViewRef} 
-              injectScript={injectScript}
+            <GeoGebraPanel
+              webViewRef={webViewRef}
+              onCommandResult={onCommandResult}
             />
           </View>
           <View style={styles.bottomPanel}>
-            <AIChatPanel 
+            <AIChatPanel
               webViewRef={webViewRef}
-              onExecuteCommand={handleExecuteCommand}
+              executeGeoGebraCommand={executeGeoGebraCommand}
             />
           </View>
         </View>
