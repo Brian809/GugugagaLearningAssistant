@@ -71,9 +71,26 @@ function extractToolCall(result: {
 
   // 方式 4：在文本中查找 {"type":"tool-call"...} 模式的 JSON 对象
   if (!jsonStr) {
-    const objMatch = text.match(/\{\s*"type"\s*:\s*"tool-call"[\s\S]*?\n?\}/);
-    if (objMatch) {
-      jsonStr = objMatch[0];
+    // 从第一个 {"type":"tool-call" 开始，提取到匹配的 }
+    const typeIdx = text.indexOf('"type":"tool-call"');
+    if (typeIdx !== -1) {
+      // 向前找到开头的 {
+      const startIdx = text.lastIndexOf("{", typeIdx);
+      if (startIdx !== -1) {
+        // 从 { 开始，计算匹配的大括号
+        let depth = 0;
+        let endIdx = -1;
+        for (let i = startIdx; i < text.length; i++) {
+          if (text[i] === "{") depth++;
+          else if (text[i] === "}") {
+            depth--;
+            if (depth === 0) { endIdx = i + 1; break; }
+          }
+        }
+        if (endIdx !== -1) {
+          jsonStr = text.substring(startIdx, endIdx);
+        }
+      }
     }
   }
 
@@ -81,19 +98,48 @@ function extractToolCall(result: {
 
   try {
     const parsed = JSON.parse(jsonStr);
-    if (parsed.type === "tool-call" && parsed.toolName) {
-      return {
-        type: "tool-call",
-        toolCallId: parsed.toolCallId || `call_${Date.now()}`,
-        toolName: parsed.toolName,
-        input: parsed.input,
-      };
+    if (parsed.type === "tool-call") {
+      // 兼容 "name" 和 "toolName" 两种字段名（不同模型可能使用不同的字段）
+      const rawName: string = parsed.toolName || parsed.name || "";
+      // 标准化工具名称：处理常见拼写错误
+      const toolName = normalizeToolName(rawName);
+      if (toolName) {
+        return {
+          type: "tool-call",
+          toolCallId: parsed.toolCallId || `call_${Date.now()}`,
+          toolName,
+          input: parsed.input,
+        };
+      }
     }
   } catch {
     // JSON 解析失败
   }
 
   return null;
+}
+
+/**
+ * 标准化工具名称：处理模型的常见拼写错误和变体
+ */
+function normalizeToolName(raw: string): string {
+  const name = raw.trim();
+  if (!name) return "";
+  // 精确匹配
+  if (name === "execute_geo_gebra_step") return name;
+  if (name === "complete_geo_gebra_task") return name;
+  if (name === "get_canvas_state") return name;
+  if (name === "analyze_geometry") return name;
+  // 模糊匹配：execute 相关
+  if (name.startsWith("execute_geo") || name.includes("execute_geo_gebra")) return "execute_geo_gebra_step";
+  // 模糊匹配：complete 相关
+  if (name.startsWith("complete_geo") || name.includes("complete_geo_gebra")) return "complete_geo_gebra_task";
+  // 模糊匹配：canvas state
+  if (name.includes("canvas_state") || name.includes("canvasState")) return "get_canvas_state";
+  // 模糊匹配：analyze
+  if (name.includes("analyze_geometry")) return "analyze_geometry";
+  // 无法匹配，返回空
+  return "";
 }
 
 /**
