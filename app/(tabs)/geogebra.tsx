@@ -23,6 +23,8 @@ import {
   type GeoGebraStep,
 } from "../../utils/geogebraAgent";
 import { useActiveLLMProvider, useLLMProviderStore } from "../../stores/llmProviderStore";
+import { useConversationStore } from "../../stores/conversationStore";
+import ConversationList from "../../components/ConversationList";
 
 // 全局类型声明
 declare global {
@@ -101,8 +103,15 @@ function AIChatPanel({
   const [currentStep, setCurrentStep] = useState(0);
   const [totalSteps, setTotalSteps] = useState(0);
   const scrollViewRef = useRef<ScrollView>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const activeProvider = useActiveLLMProvider();
   const loadProviders = useLLMProviderStore((state) => state.loadProviders);
+
+  // 对话状态
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationListVisible, setConversationListVisible] = useState(false);
+  const createConversation = useConversationStore((s) => s.createConversation);
+  const appendMessages = useConversationStore((s) => s.appendMessages);
 
   // 组件加载时从 storage 加载 providers
   React.useEffect(() => {
@@ -206,37 +215,60 @@ function AIChatPanel({
     }
   }, [webViewRef, onExecuteCommand, addMessage]);
 
+  const cancelGeneration = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setIsLoading(false);
+  }, []);
+
   // 处理发送消息
   const handleSend = async () => {
     console.log("handleSend called", { inputText, selectedImage, hasProvider: !!activeProvider });
 
-    if (!inputText.trim() && !selectedImage) {
-      console.log("handleSend: no content, returning");
-      return;
-    }
-
+    if (!inputText.trim() && !selectedImage) return;
     if (!activeProvider) {
-      console.log("handleSend: no provider");
       Alert.alert("错误", "请先配置 LLM 提供商");
       return;
     }
 
+    const abortController = new AbortController();
+    abortRef.current = abortController;
+
+    const userContent = inputText.trim() || "请分析这张几何图片";
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
-      content: inputText.trim() || "请分析这张几何图片",
+      content: userContent,
       imageUri: selectedImage || undefined,
     };
 
     addMessage(userMessage);
+
+    // Build history messages for multi-turn follow-up
+    const historyMessages = messages
+      .filter(m => m.role === "user" || m.role === "assistant")
+      .map(m => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      }));
+
     setInputText("");
+    const currentImage = selectedImage;
     setSelectedImage(null);
     setIsLoading(true);
     setCurrentStep(0);
     setTotalSteps(0);
 
+    // Ensure conversation exists
+    let convId = conversationId;
+    if (!convId) {
+      convId = await createConversation("geogebra", userContent);
+      setConversationId(convId);
+    }
+
     try {
-      // 显示开始消息
       addMessage({
         id: (Date.now() + 1).toString(),
         role: "assistant",
@@ -245,24 +277,25 @@ function AIChatPanel({
 
       let result;
 
-      if (selectedImage) {
-        // 多模态图片分析 - 逐步执行
+      if (currentImage) {
         result = await analyzeImageWithSteps(
-          selectedImage,
+          currentImage,
           activeProvider,
           handleStepExecution,
-          inputText.trim()
+          inputText.trim() || undefined,
+          abortController.signal,
+          historyMessages.length > 0 ? historyMessages : undefined
         );
       } else {
-        // 文本描述生成 - 逐步执行
         result = await generateFromDescriptionWithSteps(
-          inputText.trim(),
+          userContent,
           activeProvider,
-          handleStepExecution
+          handleStepExecution,
+          abortController.signal,
+          historyMessages.length > 0 ? historyMessages : undefined
         );
       }
 
-      // 完成后显示总结
       addMessage({
         id: (Date.now() + 2).toString(),
         role: "assistant",
@@ -271,7 +304,15 @@ function AIChatPanel({
           `${result.description}\n\n` +
           `共执行 ${result.suggestedSteps.length} 个步骤。`,
       });
+
+      // Persist conversation turn
+      const assistantContent = `绘图完成：${result.description}`;
+      appendMessages(convId, [
+        { role: "user", content: userContent },
+        { role: "assistant", content: assistantContent },
+      ]).catch(() => {});
     } catch (error) {
+      if (error instanceof Error && (error.message === "AbortError" || error.name === "AbortError")) return;
       const errorMessage = error instanceof Error ? error.message : "处理失败";
       addMessage({
         id: (Date.now() + 2).toString(),
@@ -282,6 +323,7 @@ function AIChatPanel({
       setIsLoading(false);
       setCurrentStep(0);
       setTotalSteps(0);
+      abortRef.current = null;
     }
   };
 
@@ -334,6 +376,13 @@ function AIChatPanel({
           </View>
         )}
         {isLoading && <ActivityIndicator size="small" color="#007AFF" style={styles.loadingIndicator} />}
+        <TouchableOpacity
+          style={styles.historyBtn}
+          activeOpacity={0.7}
+          onPress={() => setConversationListVisible(true)}
+        >
+          <Ionicons name="time-outline" size={20} color="#007AFF" />
+        </TouchableOpacity>
       </View>
 
       {/* 工具栏 */}
@@ -385,20 +434,37 @@ function AIChatPanel({
         <TouchableOpacity
           style={[
             styles.sendButton,
-            (!inputText.trim() && !selectedImage) || isLoading
+            isLoading ? styles.stopButton : null,
+            (!inputText.trim() && !selectedImage) && !isLoading
               ? styles.sendButtonDisabled
               : null,
           ]}
-          onPress={handleSend}
-          disabled={(!inputText.trim() && !selectedImage) || isLoading}
+          onPress={isLoading ? cancelGeneration : handleSend}
+          disabled={(!inputText.trim() && !selectedImage) && !isLoading}
         >
           {isLoading ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <Ionicons name="stop" size={20} color="#fff" />
           ) : (
             <Ionicons name="send" size={20} color="#fff" />
           )}
         </TouchableOpacity>
       </View>
+
+      {/* 对话历史 Modal */}
+      <ConversationList
+        visible={conversationListVisible}
+        onClose={() => setConversationListVisible(false)}
+        type="geogebra"
+        onSelect={(id) => setConversationId(id)}
+        onCreateNew={() => {
+          setConversationId(null);
+          setMessages([{
+            id: "1",
+            role: "assistant",
+            content: "你好！我是你的数学几何助手。\n\n我可以：\n• 分析几何图片并逐步绘制\n• 根据描述分步构建图形\n• 每步执行后你都能看到效果",
+          }]);
+        }}
+      />
     </View>
   );
 }
@@ -1264,5 +1330,11 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: "#c7c7cc",
+  },
+  stopButton: {
+    backgroundColor: "#FF3B30",
+  },
+  historyBtn: {
+    padding: 4,
   },
 });

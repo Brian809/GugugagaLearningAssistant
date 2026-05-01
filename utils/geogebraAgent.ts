@@ -1,80 +1,14 @@
 import { generateText, tool, ModelMessage } from "ai";
 import { z } from "zod";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { LLMProvider, SUPPORTED_MODELS } from "./llmProviders";
+import { LLMProvider } from "./llmProviders";
+import { createAIClient, isOpenRouterProvider, getModelName } from "./createLearningClient";
 
-// 为了保持向后兼容，保留旧版本的类型定义
 export type GeoGebraAnalysis = {
   description: string;
-  elements: {
-    type: string;
-    name: string;
-    definition: string;
-    properties?: Record<string, unknown>;
-  }[];
-  commands: {
-    type: "command" | "expression";
-    content: string;
-    description?: string;
-  }[];
+  elements: { type: string; name: string; definition: string; properties?: Record<string, unknown> }[];
+  commands: { type: "command" | "expression"; content: string; description?: string }[];
   suggestedSteps: string[];
 };
-
-/**
- * 获取要使用的模型名称
- */
-function getModelName(provider: LLMProvider, requireMultimodal: boolean = false): string {
-  if (provider.modelName) {
-    return provider.modelName;
-  }
-  // 从 SUPPORTED_MODELS 中找到匹配 provider 的第一个模型
-  const providerType = provider.providerType.replace("Compatible", "").toLowerCase();
-  const matchingModels = SUPPORTED_MODELS.filter(
-    (m) => m.provider.toLowerCase() === providerType || m.provider.toLowerCase() === provider.providerName.toLowerCase()
-  );
-  
-  if (requireMultimodal) {
-    const multimodalModel = matchingModels.find((m) => m.multimodal);
-    if (multimodalModel) {
-      return multimodalModel.id;
-    }
-  }
-  
-  return matchingModels[0]?.id || "gpt-4o";
-}
-
-/**
- * 创建 AI 客户端
- * 
- * 对于 OpenRouter，使用专用的 @openrouter/ai-sdk-provider 以获得更好的兼容性
- * 对于其他提供商，使用通用的 @ai-sdk/openai
- */
-function createAIClient(provider: LLMProvider) {
-  const isOpenRouter = provider.baseUrl.includes("openrouter.ai");
-  
-  if (isOpenRouter) {
-    return createOpenRouter({
-      apiKey: provider.apiKey,
-      headers: {
-        "HTTP-Referer": "https://gugugaga-learning-assistant.app",
-        "X-Title": "Gugugaga Learning Assistant",
-      },
-    });
-  }
-  
-  return createOpenAI({
-    baseURL: provider.baseUrl,
-    apiKey: provider.apiKey,
-  });
-}
-
-/**
- * 判断是否为 OpenRouter 提供商
- */
-function isOpenRouterProvider(provider: LLMProvider): boolean {
-  return provider.baseUrl.includes("openrouter.ai");
-}
 
 // 步骤信息类型
 export type GeoGebraStep = {
@@ -169,7 +103,9 @@ export async function analyzeImageWithSteps(
   imageUri: string,
   provider: LLMProvider,
   onStepExecution: StepExecutionCallback,
-  userPrompt?: string
+  userPrompt?: string,
+  signal?: AbortSignal,
+  historyMessages?: ModelMessage[]
 ): Promise<{ description: string; elements: unknown[]; suggestedSteps: string[] }> {
   const client = createAIClient(provider);
   const base64Image = await imageToBase64(imageUri);
@@ -177,9 +113,14 @@ export async function analyzeImageWithSteps(
   const modelName = getModelName(provider, true);
   const useOpenRouter = isOpenRouterProvider(provider);
 
+  const isFollowUp = historyMessages && historyMessages.length > 0;
+  const followUpNote = isFollowUp
+    ? "\n\n[注意：这是对现有图形的修改/补充。请基于当前画布上已有的内容进行操作，不要重新创建。]"
+    : "";
+
   const userMessageContent = userPrompt
-    ? `${userPrompt}\n\n请分析这张几何图片，然后分步生成 GeoGebra 指令。一次执行一条命令，等待执行结果后再继续。`
-    : "请分析这张几何图片，然后分步生成 GeoGebra 指令来重建这个图形。一次执行一条命令，等待执行结果后再继续。";
+    ? `${userPrompt}\n\n请分析这张几何图片，然后分步生成 GeoGebra 指令。一次执行一条命令，等待执行结果后再继续。${followUpNote}`
+    : "请分析这张几何图片，然后分步生成 GeoGebra 指令来重建这个图形。一次执行一条命令，等待执行结果后再继续。" + followUpNote;
 
   const systemPrompt = `你是一个专业的几何绘图助手，使用 GeoGebra 重建几何图形。
 
@@ -225,9 +166,13 @@ export async function analyzeImageWithSteps(
 - 正多边形：poly = Polygon(A, B, 6)  以 AB 为边的六边形
 
 ### 交点
+命令：Intersect(A, B) 返回 A 和 B 的所有交点
 - 两线交点：I = Intersect(l1, l2)
 - 线与圆交点：I = Intersect(l, c)
 - 两圆交点：I = Intersect(c1, c2)
+- 垂足：F = Intersect(p, s)  其中 p 是 PerpendicularLine
+- 如果 Intersect 返回多个点且只需要其中一个，可以用：F = Intersect(p, s, 1)
+- 重要：Intersect 只接受两个几何对象参数。不要用 Intersect(A, B, C)
 
 ### 角度
 - 角度：α = Angle(A, B, C)  顶点在 B
@@ -248,6 +193,7 @@ export async function analyzeImageWithSteps(
 错误: PointOnSegment(A, C)    正确: Point(Segment(A, C)) 或 Point(s)
 错误: PerpendicularFoot(E, l) 正确: Intersect(PerpendicularLine(E, l), l)
 错误: PointOnLine(E, l)       正确: Point(l)
+错误: Intersection(A, B, C)                   正确: Intersection 只接受 2 个列表参数: Intersection({A, B}, {C, D})
 
 ## 关键规则：引用已创建的对象
 必须记住你创建的对象名称，并在后续命令中正确使用。
@@ -280,6 +226,7 @@ export async function analyzeImageWithSteps(
 
   const messages: ModelMessage[] = [
     { role: "system", content: systemPrompt },
+    ...(historyMessages || []),
     {
       role: "user",
       content: [
@@ -290,6 +237,8 @@ export async function analyzeImageWithSteps(
   ];
 
   while (stepCount < maxSteps) {
+    if (signal?.aborted) throw new Error("AbortError");
+
     stepCount++;
     console.log(`\n=== 开始第 ${stepCount} 轮调用 ===`);
 
@@ -301,6 +250,7 @@ export async function analyzeImageWithSteps(
         complete_geo_gebra_task: completeGeoGebraTaskTool,
       },
       toolChoice: useOpenRouter ? "auto" : "required",
+      abortSignal: signal,
     });
 
     // 尝试从 toolCalls 获取工具调用
@@ -400,13 +350,20 @@ export async function analyzeImageWithSteps(
 export async function generateFromDescriptionWithSteps(
   description: string,
   provider: LLMProvider,
-  onStepExecution: StepExecutionCallback
+  onStepExecution: StepExecutionCallback,
+  signal?: AbortSignal,
+  historyMessages?: ModelMessage[]
 ): Promise<{ description: string; elements: unknown[]; suggestedSteps: string[] }> {
   const client = createAIClient(provider);
   const modelName = getModelName(provider, false);
   const useOpenRouter = isOpenRouterProvider(provider);
 
-  const systemPrompt = `你是一个专业的几何绘图助手，使用 GeoGebra 根据描述绘制几何图形。
+  const isFollowUp = historyMessages && historyMessages.length > 0;
+  const followUpNote = isFollowUp
+    ? "\n\n[注意：这是对现有图形的修改/补充。请基于当前画布上已有的内容进行操作，不要重新创建。]"
+    : "";
+
+  const systemPrompt = `你是一个专业的几何绘图助手，使用 GeoGebra 根据描述绘制几何图形。${followUpNote}
 
 ## 执行规则（必须遵守）
 1. 理解描述，规划作图步骤
@@ -450,9 +407,13 @@ export async function generateFromDescriptionWithSteps(
 - 正多边形：poly = Polygon(A, B, 6)  以 AB 为边的六边形
 
 ### 交点
+命令：Intersect(A, B) 返回 A 和 B 的所有交点
 - 两线交点：I = Intersect(l1, l2)
 - 线与圆交点：I = Intersect(l, c)
 - 两圆交点：I = Intersect(c1, c2)
+- 垂足：F = Intersect(p, s)  其中 p 是 PerpendicularLine
+- 如果 Intersect 返回多个点且只需要其中一个，可以用：F = Intersect(p, s, 1)
+- 重要：Intersect 只接受两个几何对象参数。不要用 Intersect(A, B, C)
 
 ### 角度
 - 角度：α = Angle(A, B, C)  顶点在 B
@@ -473,6 +434,7 @@ export async function generateFromDescriptionWithSteps(
 错误: PointOnSegment(A, C)    正确: Point(Segment(A, C)) 或 Point(s)
 错误: PerpendicularFoot(E, l) 正确: Intersect(PerpendicularLine(E, l), l)
 错误: PointOnLine(E, l)       正确: Point(l)
+错误: Intersection(A, B, C)                   正确: Intersection 只接受 2 个列表参数: Intersection({A, B}, {C, D})
 
 ## 关键规则：引用已创建的对象
 必须记住你创建的对象名称，并在后续命令中正确使用。
@@ -503,10 +465,13 @@ export async function generateFromDescriptionWithSteps(
 
   const messages: ModelMessage[] = [
     { role: "system", content: systemPrompt },
+    ...(historyMessages || []),
     { role: "user", content: [{ type: "text", text: "请根据以下描述绘制几何图形，分步执行：\n\n" + description }] },
   ];
 
   while (stepCount < maxSteps) {
+    if (signal?.aborted) throw new Error("AbortError");
+
     stepCount++;
     console.log(`\n=== 开始第 ${stepCount} 轮调用 ===`);
 
@@ -533,6 +498,7 @@ export async function generateFromDescriptionWithSteps(
         complete_geo_gebra_task: completeGeoGebraTaskTool,
       },
       toolChoice: useOpenRouter ? "auto" : "required",
+      abortSignal: signal,
     });
 
     const toolCall = result.toolCalls?.[0];

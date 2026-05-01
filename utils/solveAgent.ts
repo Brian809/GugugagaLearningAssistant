@@ -178,13 +178,15 @@ const SYSTEM_PROMPT = `你是一个专业的数学解题助手。你的任务是
  * @param provider - LLM 提供商配置
  * @param image - 可选的图片 URI（用于拍照搜题等多模态输入）
  * @param onStep - 每一步执行后的回调，用于 UI 展示步骤结果
+ * @param signal - 可选的 AbortSignal，用于取消解题
  * @returns 解题结果，包含最终答案和所有步骤摘要
  */
 export async function solveProblem(
   input: string,
   provider: LLMProvider,
   image?: string,
-  onStep?: StepCallback
+  onStep?: StepCallback,
+  signal?: AbortSignal
 ): Promise<SolveResult> {
   const client = createAIClient(provider);
   const modelName = getModelName(provider, !!image);
@@ -218,6 +220,8 @@ export async function solveProblem(
   let stepCount = 0;
 
   while (stepCount < maxSteps) {
+    if (signal?.aborted) throw new Error("AbortError");
+
     stepCount++;
     console.log(`\n=== 解题步骤第 ${stepCount} 轮 ===`);
 
@@ -229,6 +233,7 @@ export async function solveProblem(
         complete_solve_task: completeSolveTaskTool,
       },
       toolChoice: useOpenRouter ? "auto" : "required",
+      abortSignal: signal,
     });
 
     // 获取工具调用

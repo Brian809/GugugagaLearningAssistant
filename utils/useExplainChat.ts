@@ -18,11 +18,12 @@
  * @module useExplainChat
  */
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { generateText } from "ai";
 import { createAIClient, getModelName, isOpenRouterProvider } from "./createLearningClient";
 import { LLMProvider } from "./llmProviders";
 import { getExplainSystemPrompt } from "./explainAgent";
+import { useConversationStore } from "../stores/conversationStore";
 
 // ==================== 类型定义 ====================
 
@@ -40,18 +41,13 @@ export interface ChatMessage {
 
 /** useExplainChat 返回值 */
 export interface UseExplainChatReturn {
-  /** 当前对话消息列表 */
   messages: ChatMessage[];
-  /** 是否正在等待 AI 回复 */
   isLoading: boolean;
-  /** 错误信息（null 表示无错误） */
   error: string | null;
-  /** 发送消息 */
   sendMessage: (text: string) => Promise<void>;
-  /** 清空聊天记录 */
   clearMessages: () => void;
-  /** 中止当前请求 */
   cancelRequest: () => void;
+  conversationId: string | null;
 }
 
 // ==================== 工具函数 ====================
@@ -127,22 +123,37 @@ function generateMessageId(): string {
  * ))}
  * ```
  */
-export function useExplainChat(provider: LLMProvider | null): UseExplainChatReturn {
+export function useExplainChat(
+  provider: LLMProvider | null,
+  conversationId?: string | null
+): UseExplainChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const appendMessages = useConversationStore((s) => s.appendMessages);
 
-  /**
-   * 发送用户消息并获取 AI 回复
-   *
-   * 流程：
-   * 1. 将用户消息追加到消息列表
-   * 2. 调用 generateText() 获取完整 AI 回复
-   * 3. 将 AI 回复逐句追加到 UI（模拟流式效果）
-   *
-   * @param text - 用户输入的问题文本
-   */
+  // Load conversation history on mount if conversationId provided
+  useEffect(() => {
+    if (!conversationId) return;
+    const conv = useConversationStore.getState().conversations.find(
+      (c) => c.id === conversationId
+    );
+    if (!conv) return;
+    try {
+      const msgs = JSON.parse(conv.messages);
+      setMessages(
+        msgs
+          .filter((m: any) => m.role !== "system")
+          .map((m: any) => ({
+            id: generateMessageId(),
+            role: m.role,
+            content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+          }))
+      );
+    } catch { /* ignore parse errors */ }
+  }, [conversationId]);
+
   const sendMessage = useCallback(
     async (text: string) => {
       if (!provider) {
@@ -252,11 +263,20 @@ export function useExplainChat(provider: LLMProvider | null): UseExplainChatRetu
         }
 
         // 流式完成，标记消息不再是 streaming 状态
-        setMessages((prev) =>
-          prev.map((m) =>
+        setMessages((prev) => {
+          const updated = prev.map((m) =>
             m.id === assistantId ? { ...m, isStreaming: false } : m
-          )
-        );
+          );
+          // Persist to conversation store
+          if (conversationId) {
+            const toPersist = [
+              { role: "user", content: text.trim() },
+              { role: "assistant", content: fullText },
+            ];
+            appendMessages(conversationId, toPersist).catch(() => {});
+          }
+          return updated;
+        });
       } catch (err: unknown) {
         // AbortError 不做错误提示
         if (err instanceof Error && err.name === "AbortError") {
@@ -271,7 +291,7 @@ export function useExplainChat(provider: LLMProvider | null): UseExplainChatRetu
         abortRef.current = null;
       }
     },
-    [provider, messages]
+    [provider, messages, conversationId, appendMessages]
   );
 
   /**
@@ -300,5 +320,6 @@ export function useExplainChat(provider: LLMProvider | null): UseExplainChatRetu
     sendMessage,
     clearMessages,
     cancelRequest,
+    conversationId: conversationId ?? null,
   };
 }

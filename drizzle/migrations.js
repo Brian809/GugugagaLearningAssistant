@@ -2,11 +2,13 @@
 
 import journal from './meta/_journal.json';
 import m0000 from './0000_eager_galactus.sql';
+import m0001 from './0001_volatile_sally_floyd.sql';
 
   export default {
     journal,
     migrations: {
-      m0000
+      m0000,
+m0001
     }
   }
   

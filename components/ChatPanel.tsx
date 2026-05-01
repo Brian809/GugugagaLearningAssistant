@@ -33,31 +33,41 @@ import { useRouter } from "expo-router";
 import { solveProblem, SolveStep, SolveResult } from "../utils/solveAgent";
 import { useExplainChat, ChatMessage } from "../utils/useExplainChat";
 import { LLMProvider } from "../utils/llmProviders";
+import { useConversationStore } from "../stores/conversationStore";
 import NotebookForm from "./NotebookForm";
+import ConversationList from "./ConversationList";
 
 // ==================== 类型定义 ====================
 
 interface ChatPanelProps {
-  /** 模式：解题 | 讲解 */
   mode: "solve" | "explain";
-  /** 当前活跃的 LLM 提供商，null 时显示无提供商状态 */
   provider: LLMProvider | null;
-  /** 外部传入的图片 URI（如拍照搜题），会预选为已选图片 */
   image?: string;
+  conversationId?: string | null;
+  onConversationChange?: (id: string) => void;
 }
 
 // ==================== 组件实现 ====================
 
-export default function ChatPanel({ mode, provider, image: externalImage }: ChatPanelProps) {
+export default function ChatPanel({
+  mode,
+  provider,
+  image: externalImage,
+  conversationId,
+  onConversationChange,
+}: ChatPanelProps) {
   const router = useRouter();
   const scrollViewRef = useRef<ScrollView>(null);
   const prevModeRef = useRef(mode);
+  const abortRef = useRef<AbortController | null>(null);
+  const createConversation = useConversationStore((s) => s.createConversation);
 
   // 共享状态
   const [inputText, setInputText] = useState("");
   const [selectedImage, setSelectedImage] = useState<string | null>(externalImage || null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conversationListVisible, setConversationListVisible] = useState(false);
 
   // 解题模式状态
   const [steps, setSteps] = useState<SolveStep[]>([]);
@@ -65,7 +75,7 @@ export default function ChatPanel({ mode, provider, image: externalImage }: Chat
   const [notebookVisible, setNotebookVisible] = useState(false);
 
   // 讲解模式 Hook
-  const explainChat = useExplainChat(provider);
+  const explainChat = useExplainChat(provider, conversationId);
 
   // 同步外部图片
   useEffect(() => {
@@ -124,9 +134,21 @@ export default function ChatPanel({ mode, provider, image: externalImage }: Chat
 
   // ==================== 解题模式逻辑 ====================
 
+  const cancelSolve = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setIsLoading(false);
+    setError("已取消");
+  }, []);
+
   const handleSolve = async () => {
     if (!inputText.trim() && !selectedImage) return;
     if (!provider) return;
+
+    const abortController = new AbortController();
+    abortRef.current = abortController;
 
     setIsLoading(true);
     setError(null);
@@ -141,14 +163,17 @@ export default function ChatPanel({ mode, provider, image: externalImage }: Chat
         async (step: SolveStep) => {
           setSteps((prev) => [...prev, step]);
           return { success: true };
-        }
+        },
+        abortController.signal
       );
       setSolveResult(result);
     } catch (err) {
+      if (err instanceof Error && (err.message === "AbortError" || err.name === "AbortError")) return;
       const message = err instanceof Error ? err.message : "解题失败，请重试";
       setError(message);
     } finally {
       setIsLoading(false);
+      abortRef.current = null;
     }
   };
 
@@ -158,6 +183,13 @@ export default function ChatPanel({ mode, provider, image: externalImage }: Chat
     if (!inputText.trim() || explainChat.isLoading) return;
     const text = inputText.trim();
     setInputText("");
+
+    // Auto-create conversation if none exists
+    if (!conversationId && onConversationChange) {
+      const id = await createConversation("explain", text);
+      onConversationChange(id);
+    }
+
     await explainChat.sendMessage(text);
   };
 
@@ -344,16 +376,17 @@ export default function ChatPanel({ mode, provider, image: externalImage }: Chat
               style={[
                 styles.actionButton,
                 styles.solveButton,
-                (!inputText.trim() && !selectedImage) || isLoading
+                isLoading ? styles.stopButton : null,
+                (!inputText.trim() && !selectedImage) && !isLoading
                   ? styles.actionButtonDisabled
                   : null,
               ]}
               activeOpacity={0.7}
-              onPress={handleSolve}
-              disabled={(!inputText.trim() && !selectedImage) || isLoading}
+              onPress={isLoading ? cancelSolve : handleSolve}
+              disabled={(!inputText.trim() && !selectedImage) && !isLoading}
             >
               {isLoading ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <Ionicons name="stop" size={20} color="#fff" />
               ) : (
                 <Text style={styles.actionButtonText}>开始解题</Text>
               )}
@@ -499,15 +532,20 @@ export default function ChatPanel({ mode, provider, image: externalImage }: Chat
             style={[
               styles.actionButton,
               styles.sendButton,
-              !inputText.trim() || explainChat.isLoading
+              explainChat.isLoading ? styles.stopButton : null,
+              !inputText.trim() && !explainChat.isLoading
                 ? styles.actionButtonDisabled
                 : null,
             ]}
             activeOpacity={0.7}
-            onPress={handleSendMessage}
-            disabled={!inputText.trim() || explainChat.isLoading}
+            onPress={explainChat.isLoading ? explainChat.cancelRequest : handleSendMessage}
+            disabled={!inputText.trim() && !explainChat.isLoading}
           >
-            <Ionicons name="send" size={18} color="#fff" />
+            {explainChat.isLoading ? (
+              <Ionicons name="stop" size={20} color="#fff" />
+            ) : (
+              <Ionicons name="send" size={18} color="#fff" />
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -903,6 +941,9 @@ const styles = StyleSheet.create({
   sendButton: {
     width: 36,
     backgroundColor: "#007AFF",
+  },
+  stopButton: {
+    backgroundColor: "#FF3B30",
   },
   actionButtonText: {
     fontSize: 14,

@@ -7,7 +7,7 @@
  * @module SolvePage
  */
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -27,10 +27,12 @@ import * as ImagePicker from "expo-image-picker";
 import ChatPanel from "../../components/ChatPanel";
 import StepVisualizer from "../../components/StepVisualizer";
 import NotebookForm from "../../components/NotebookForm";
+import ConversationList from "../../components/ConversationList";
 import {
   useActiveLLMProvider,
   useLLMProvidersLoading,
 } from "../../stores/llmProviderStore";
+import { useConversationStore } from "../../stores/conversationStore";
 import {
   solveProblem,
   SolveStep,
@@ -61,6 +63,14 @@ export default function SolvePage() {
   // ---- 错题本表单 ----
   const [notebookVisible, setNotebookVisible] = useState(false);
 
+  // ---- 对话状态 ----
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationListVisible, setConversationListVisible] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const createConversation = useConversationStore((s) => s.createConversation);
+  const replaceMessages = useConversationStore((s) => s.replaceMessages);
+  const appendMessages = useConversationStore((s) => s.appendMessages);
+
   // ==================== 图片选择 ====================
 
   const pickImage = useCallback(async () => {
@@ -88,9 +98,21 @@ export default function SolvePage() {
 
   // ==================== 核心解题逻辑 ====================
 
+  const cancelSolve = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setIsSolving(false);
+    setStatus("idle");
+  }, []);
+
   const handleSolve = useCallback(async () => {
     if (!provider || (!inputText.trim() && !selectedImage) || isSolving)
       return;
+
+    const abortController = new AbortController();
+    abortRef.current = abortController;
 
     setIsSolving(true);
     setStatus("solving");
@@ -98,6 +120,13 @@ export default function SolvePage() {
     setCurrentStepIndex(0);
     setSolveResult(null);
     setErrorMessage(null);
+
+    // Ensure conversation exists
+    let convId = conversationId;
+    if (!convId) {
+      convId = await createConversation("solve", inputText.trim() || "图片解题");
+      setConversationId(convId);
+    }
 
     try {
       const result = await solveProblem(
@@ -108,19 +137,30 @@ export default function SolvePage() {
           setSteps((prev) => [...prev, step]);
           setCurrentStepIndex((prev) => prev + 1);
           return { success: true };
-        }
+        },
+        abortController.signal
       );
       setSolveResult(result);
       setStatus("completed");
+
+      // Persist the completed solve as conversation messages
+      const msgs = [
+        { role: "user", content: inputText.trim() || "请解决这个数学问题" },
+        { role: "assistant", content: JSON.stringify(result) },
+      ];
+      replaceMessages(convId, msgs).catch(() => {});
+      appendMessages(convId, []).catch(() => {}); // force update timestamp
     } catch (err) {
+      if (err instanceof Error && (err.message === "AbortError" || err.name === "AbortError")) return;
       const message =
         err instanceof Error ? err.message : "解题失败，请重试";
       setErrorMessage(message);
       setStatus("error");
     } finally {
       setIsSolving(false);
+      abortRef.current = null;
     }
-  }, [provider, inputText, selectedImage, isSolving]);
+  }, [provider, inputText, selectedImage, isSolving, conversationId, createConversation, replaceMessages, appendMessages]);
 
   // ==================== 加载中 ====================
 
@@ -165,6 +205,13 @@ export default function SolvePage() {
                   AI 逐步解题，展示完整过程
                 </Text>
               </View>
+              <TouchableOpacity
+                style={styles.historyButton}
+                activeOpacity={0.7}
+                onPress={() => setConversationListVisible(true)}
+              >
+                <Ionicons name="time-outline" size={24} color="#007AFF" />
+              </TouchableOpacity>
             </View>
 
             {/* ---- StepVisualizer 时间线 ---- */}
@@ -315,18 +362,19 @@ export default function SolvePage() {
               <TouchableOpacity
                 style={[
                   styles.solveButton,
-                  (!inputText.trim() && !selectedImage) || isSolving
+                  isSolving ? styles.stopButton : null,
+                  (!inputText.trim() && !selectedImage) && !isSolving
                     ? styles.solveButtonDisabled
                     : null,
                 ]}
                 activeOpacity={0.7}
-                onPress={handleSolve}
+                onPress={isSolving ? cancelSolve : handleSolve}
                 disabled={
-                  (!inputText.trim() && !selectedImage) || isSolving
+                  (!inputText.trim() && !selectedImage) && !isSolving
                 }
               >
                 {isSolving ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <Ionicons name="stop" size={20} color="#fff" />
                 ) : (
                   <Text style={styles.solveButtonText}>开始解题</Text>
                 )}
@@ -346,6 +394,21 @@ export default function SolvePage() {
           analysis: solveResult?.steps
             ?.map((s) => `步骤 ${s.stepNumber}: ${s.description}`)
             .join("\n"),
+        }}
+      />
+
+      {/* ===== 对话历史 Modal ===== */}
+      <ConversationList
+        visible={conversationListVisible}
+        onClose={() => setConversationListVisible(false)}
+        type="solve"
+        onSelect={(id) => setConversationId(id)}
+        onCreateNew={() => {
+          setConversationId(null);
+          setSteps([]);
+          setSolveResult(null);
+          setStatus("idle");
+          setErrorMessage(null);
         }}
       />
     </SafeAreaView>
@@ -625,6 +688,12 @@ const styles = StyleSheet.create({
   },
   solveButtonDisabled: {
     opacity: 0.5,
+  },
+  stopButton: {
+    backgroundColor: "#FF3B30",
+  },
+  historyButton: {
+    padding: 8,
   },
   solveButtonText: {
     fontSize: 14,
