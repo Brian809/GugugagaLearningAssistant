@@ -277,7 +277,7 @@ export function generateMobileCommandScript(command: string): string {
       let stmt = `{var _oe=console.error;var _ce="";console.error=function(){_ce+=Array.prototype.slice.call(arguments).join(" ");_oe.apply(console,arguments);};`;
       stmt += `r=ggbApplet.evalCommand("${escaped}");`;
       stmt += `console.error=_oe;`;
-      stmt += `if(r!==true){ok=false;err=_ce||"Failed: ${safeDisplay}";}`;
+      stmt += `if(r===false){ok=false;err=_ce||"Failed: ${safeDisplay}";}`;
       if (varName) {
         stmt += `else{var t=ggbApplet.getObjectType("${varName}");if(!t){ok=false;err="Not created: ${varName}";}}`;
       }
@@ -288,7 +288,8 @@ export function generateMobileCommandScript(command: string): string {
 
   const beforeCount = `var bc=typeof ggbApplet.getObjectNumber==="function"?ggbApplet.getObjectNumber():0;`;
   const afterCheck = `var ac=typeof ggbApplet.getObjectNumber==="function"?ggbApplet.getObjectNumber():0;`;
-  const countCheck = `if(ok&&bc===ac){var hasAssign=/^\\s*[A-Za-z_][A-Za-z0-9_]*\\s*=/.test("${commands[0].replace(/\\/g, "\\\\").replace(/"/g, '\\"')}");if(!hasAssign){ok=false;err="No visible effect";}}`;
+  const firstEscaped = commands[0].replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const countCheck = `if(ok&&bc===ac){var c="${firstEscaped}".trim();var isVisual=c.indexOf("Set")===0||c.indexOf("Delete")===0||c.indexOf("Show")===0;if(!isVisual){var hasAssign=/^\\s*[A-Za-z_][A-Za-z0-9_]*\\s*=/.test(c);if(!hasAssign){ok=false;err="No visible effect";}}}`;
 
   return (
     `(function(){try{` +

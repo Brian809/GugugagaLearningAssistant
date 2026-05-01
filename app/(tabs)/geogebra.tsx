@@ -1030,7 +1030,9 @@ export default function GeoGebraScreen() {
                     }
                   }
                 }
-                if (!evalOk || !objectCreated) {
+                // evalCommand 对 SetColor/SetVisible 等视觉命令可能返回 undefined
+                // 只有明确返回 false 才判为失败
+                if (evalOk === false || !objectCreated) {
                   allOk = false;
                   failedCmd = cmd;
                 }
@@ -1053,7 +1055,7 @@ export default function GeoGebraScreen() {
             const hasAssignment = subCommands.some((c) =>
               /^\s*[A-Za-z_][A-Za-z0-9_]*\s*=/.test(c)
             );
-            if (!allOk || (beforeCount === afterCount && !hasAssignment && subCommands.some((c) => !c.startsWith("Set") && !c.startsWith("Delete")))) {
+            if (!allOk || (beforeCount === afterCount && !hasAssignment && subCommands.some((c) => !c.startsWith("Set") && !c.startsWith("Delete") && !c.startsWith("Show")))) {
               const errDetail = geoErrorText || (allOk ? `命令未产生可见效果: ${failedCmd || command}` : `命令执行失败: ${failedCmd}`);
               return { success: false, error: errDetail };
             }
