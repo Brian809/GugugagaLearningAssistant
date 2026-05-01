@@ -69,51 +69,80 @@ function extractToolCall(result: {
     }
   }
 
-  // 方式 4：在文本中查找 {"type":"tool-call"...} 模式的 JSON 对象
+  // 方式 4：在文本中查找包含工具调用的 JSON 对象
   if (!jsonStr) {
-    // 从第一个 {"type":"tool-call" 开始，提取到匹配的 }
-    const typeIdx = text.indexOf('"type":"tool-call"');
-    if (typeIdx !== -1) {
-      // 向前找到开头的 {
-      const startIdx = text.lastIndexOf("{", typeIdx);
-      if (startIdx !== -1) {
-        // 从 { 开始，计算匹配的大括号
-        let depth = 0;
-        let endIdx = -1;
-        for (let i = startIdx; i < text.length; i++) {
-          if (text[i] === "{") depth++;
-          else if (text[i] === "}") {
-            depth--;
-            if (depth === 0) { endIdx = i + 1; break; }
-          }
+    // 查找 "type":"tool-call" 或 "type":"execute_geo_gebra_step" 等
+    const typePatterns = [
+      '"type":"tool-call"',
+      '"type":"execute_geo_gebra_step"',
+      '"type":"complete_geo_gebra_task"',
+      '"type":"get_canvas_state"',
+      "'type':'tool-call'",
+      "'type':'execute_geo_gebra_step'",
+    ];
+    let startIdx = -1;
+    for (const pat of typePatterns) {
+      const idx = text.indexOf(pat);
+      if (idx !== -1) { startIdx = text.lastIndexOf("{", idx); break; }
+    }
+    if (startIdx !== -1) {
+      let depth = 0;
+      let endIdx = -1;
+      for (let i = startIdx; i < text.length; i++) {
+        if (text[i] === "{") depth++;
+        else if (text[i] === "}") {
+          depth--;
+          if (depth === 0) { endIdx = i + 1; break; }
         }
-        if (endIdx !== -1) {
-          jsonStr = text.substring(startIdx, endIdx);
-        }
+      }
+      if (endIdx !== -1) {
+        jsonStr = text.substring(startIdx, endIdx);
       }
     }
   }
 
   if (!jsonStr) return null;
 
+  // 尝试多种 JSON 解析策略
+  let parsed: Record<string, any> | null = null;
   try {
-    const parsed = JSON.parse(jsonStr);
-    if (parsed.type === "tool-call") {
-      // 兼容 "name" 和 "toolName" 两种字段名（不同模型可能使用不同的字段）
-      const rawName: string = parsed.toolName || parsed.name || "";
-      // 标准化工具名称：处理常见拼写错误
-      const toolName = normalizeToolName(rawName);
-      if (toolName) {
-        return {
-          type: "tool-call",
-          toolCallId: parsed.toolCallId || `call_${Date.now()}`,
-          toolName,
-          input: parsed.input,
-        };
-      }
-    }
+    parsed = JSON.parse(jsonStr);
   } catch {
-    // JSON 解析失败
+    // 尝试将单引号 JSON 转为双引号
+    try {
+      const fixed = jsonStr.replace(/'/g, '"');
+      parsed = JSON.parse(fixed);
+    } catch {
+      // 全部失败
+    }
+  }
+
+  if (!parsed) return null;
+
+  // 方式 A：type 是 "tool-call"（标准格式）
+  if (parsed.type === "tool-call") {
+    const rawName: string = parsed.toolName || parsed.name || "";
+    const toolName = normalizeToolName(rawName);
+    if (toolName) {
+      return {
+        type: "tool-call",
+        toolCallId: parsed.toolCallId || `call_${Date.now()}`,
+        toolName,
+        input: parsed.input || parsed.parameters,
+      };
+    }
+  }
+
+  // 方式 B：type 直接是工具名（某些模型省略 "tool-call" 包装）
+  // 如 {"type":"execute_geo_gebra_step","parameters":{...}}
+  const directToolName = normalizeToolName(parsed.type || "");
+  if (directToolName && (parsed.input || parsed.parameters)) {
+    return {
+      type: "tool-call",
+      toolCallId: parsed.toolCallId || `call_${Date.now()}`,
+      toolName: directToolName,
+      input: parsed.input || parsed.parameters,
+    };
   }
 
   return null;
