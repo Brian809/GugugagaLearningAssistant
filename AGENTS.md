@@ -135,7 +135,7 @@
 // 跨平台存储 (utils/storage.ts)
 // Web: localStorage
 // iOS/Android: expo-secure-store
-import * as Storage from "../utils/storage";
+import * as Storage from "@/utils/storage";
 await Storage.setItemAsync("key", "value");
 await Storage.getItemAsync("key");
 await Storage.deleteItemAsync("key");
@@ -170,8 +170,12 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 ### GeoGebra 集成
 - **Web**: 动态加载 `deployggb.js` → GGBApplet → HTML5 codebase
 - **移动端**: WebView 内嵌完整 HTML → deployggb.js → 通过 postMessage 通信
-- **命令执行**: `ggbApplet.evalCommand(command)` + `ggbApplet.refreshViews()`
-- **脚本注入**: 通过 `injectJavaScript` 或 React state 触发
+- **命令执行**: `ggbApplet.evalCommand(command)` 返回 `true`/`false` → 必须检查返回值
+- **命令反馈闭环** (GeoGebraScreen → executeGeoGebraCommand):
+  - Web: 直接同步调用 `ggbAppletInstance.evalCommand(command)`，检查返回值
+  - 移动端: `generateMobileCommandScript(command)` → injectJavaScript → postMessage `{ type: "commandResult", success, error }` → pendingCommandRef Promise 桥接 → 返回结果
+  - 每条命令执行后返回 `{ success: boolean, error?: string }` 给 AI，AI 可根据错误修正重试
+- **工具调用容错** (extractToolCall): 4 种回退策略 → SDK toolCalls → 纯 JSON → Markdown 代码块 → 正则提取；解析失败时推纠正消息让模型重试，而非抛错
 
 ---
 
@@ -180,7 +184,13 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 ### 代码风格
 - TypeScript strict mode
 - ESLint with `eslint-config-expo`
-- 路径别名: `@/*` → `./*`
+- **路径别名**: 统一使用 `@/*` 别名，禁止相对路径（如 `../../components/Foo`）→ 应写为 `@/components/Foo`
+  - tsconfig.json 已配置 `"@/*": ["./*"]`
+  - expo/metro-config 自动读取 tsconfig paths 并处理 Metro 解析
+  - 例外：同目录文件可用 `./Foo`（如 `components/ChatPanel.tsx` → `import ConversationList from "./ConversationList"`）
+
+### Git 规范
+- **提交页脚**: 所有提交必须包含 `Co-Authored-By: DeepSeek V4 with Claude Code`
 
 ### Expo 配置
 - **包名**: `com.brianeee.GugugagaLearningAssistant`
