@@ -555,6 +555,7 @@ function GeoGebraWebView() {
         useBrowserForJS: false,
         preventFocus: true,
         algebraInputPosition: "bottom",
+        showErrorDialogs: false,
       };
 
       // 创建 applet 实例并注入到子容器（Classic 6: 第二参数为 true）
@@ -583,8 +584,12 @@ function GeoGebraWebView() {
           clearInterval(checkAppletReady);
           ggbAppletInstance = ggb;
           setIsReady(true);
+          // 禁用 GeoGebra 错误弹窗，避免无效命令弹出对话框
+          if (typeof ggb.setErrorDialogsActive === "function") {
+            ggb.setErrorDialogsActive(false);
+          }
           console.log("GeoGebra applet ready after", checkCount, "checks");
-          
+
           // 执行待处理的命令
           while (pendingCommands.length > 0) {
             const cmd = pendingCommands.shift();
@@ -797,6 +802,7 @@ const GEOGEBRA_HTML = `
           useBrowserForJS: false,
           preventFocus: true,
           algebraInputPosition: "bottom",
+          showErrorDialogs: false,
         };
 
         // 使用 Classic 6 HTML5 codebase
@@ -824,6 +830,8 @@ const GEOGEBRA_HTML = `
         if (ggb && typeof ggb.evalCommand === 'function' && canvas && !readySent) {
           readySent = true;
           clearInterval(checkReady);
+          // 禁用 GeoGebra 错误弹窗
+          try { if (typeof ggb.setErrorDialogsActive === 'function') ggb.setErrorDialogsActive(false); } catch(e) {}
           try { window.ReactNativeWebView.postMessage(JSON.stringify({type: 'ready'})); } catch(e) {}
           console.log('[GGB] Applet ready after', checkCount, 'checks. Canvas:', canvas.width, 'x', canvas.height);
           
@@ -988,20 +996,51 @@ export default function GeoGebraScreen() {
               .map((c) => c.trim())
               .filter((c) => c.length > 0);
 
+            // 记录执行前的对象数量，用于验证命令是否真的产生了效果
+            const beforeCount: number =
+              typeof ggbAppletInstance.getObjectNumber === "function"
+                ? ggbAppletInstance.getObjectNumber()
+                : 0;
+
             let allOk = true;
             let failedCmd = "";
             for (const cmd of subCommands) {
-              const ok: boolean = ggbAppletInstance.evalCommand(cmd);
-              if (!ok) {
+              const evalOk: boolean = ggbAppletInstance.evalCommand(cmd);
+              // 即使 evalCommand 返回 true，也验证赋值命令是否真的创建了对象
+              const assignMatch = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+              let objectCreated = true;
+              if (assignMatch && typeof ggbAppletInstance.getObjectType === "function") {
+                const varName = assignMatch[1];
+                // 排除 Delete 命令（Delete[A] 也匹配 = 模式，但它不是赋值）
+                if (!cmd.trim().startsWith("Delete")) {
+                  const objType = ggbAppletInstance.getObjectType(varName);
+                  if (!objType) {
+                    objectCreated = false;
+                  }
+                }
+              }
+              if (!evalOk || !objectCreated) {
                 allOk = false;
                 failedCmd = cmd;
               }
             }
             ggbAppletInstance.refreshViews();
-            return {
-              success: allOk,
-              error: allOk ? undefined : `命令执行失败: ${failedCmd}`,
-            };
+
+            // 二次验证：如果没有任何新对象产生且没有可见效果
+            const afterCount: number =
+              typeof ggbAppletInstance.getObjectNumber === "function"
+                ? ggbAppletInstance.getObjectNumber()
+                : 0;
+            const hasAssignment = subCommands.some((c) =>
+              /^\s*[A-Za-z_][A-Za-z0-9_]*\s*=/.test(c)
+            );
+            if (!allOk || (beforeCount === afterCount && !hasAssignment && subCommands.some((c) => !c.startsWith("Set") && !c.startsWith("Delete")))) {
+              return {
+                success: false,
+                error: allOk ? `命令未产生可见效果: ${failedCmd || command}` : `命令执行失败: ${failedCmd}`,
+              };
+            }
+            return { success: true };
           } catch (e: any) {
             console.error("GeoGebra command error:", e);
             return {
