@@ -1002,29 +1002,45 @@ export default function GeoGebraScreen() {
                 ? ggbAppletInstance.getObjectNumber()
                 : 0;
 
+            // 拦截 console.error 捕获 GeoGebra 的错误文本
+            const capturedErrors: string[] = [];
+            const origError = console.error;
+            console.error = (...args: any[]) => {
+              capturedErrors.push(args.map(String).join(" "));
+              origError.apply(console, args);
+            };
+
             let allOk = true;
             let failedCmd = "";
-            for (const cmd of subCommands) {
-              const evalOk: boolean = ggbAppletInstance.evalCommand(cmd);
-              // 即使 evalCommand 返回 true，也验证赋值命令是否真的创建了对象
-              const assignMatch = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
-              let objectCreated = true;
-              if (assignMatch && typeof ggbAppletInstance.getObjectType === "function") {
-                const varName = assignMatch[1];
-                // 排除 Delete 命令（Delete[A] 也匹配 = 模式，但它不是赋值）
-                if (!cmd.trim().startsWith("Delete")) {
-                  const objType = ggbAppletInstance.getObjectType(varName);
-                  if (!objType) {
-                    objectCreated = false;
+            try {
+              for (const cmd of subCommands) {
+                const evalOk: boolean = ggbAppletInstance.evalCommand(cmd);
+                // 即使 evalCommand 返回 true，也验证赋值命令是否真的创建了对象
+                const assignMatch = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+                let objectCreated = true;
+                if (assignMatch && typeof ggbAppletInstance.getObjectType === "function") {
+                  const varName = assignMatch[1];
+                  if (!cmd.trim().startsWith("Delete")) {
+                    const objType = ggbAppletInstance.getObjectType(varName);
+                    if (!objType) {
+                      objectCreated = false;
+                    }
                   }
                 }
+                if (!evalOk || !objectCreated) {
+                  allOk = false;
+                  failedCmd = cmd;
+                }
               }
-              if (!evalOk || !objectCreated) {
-                allOk = false;
-                failedCmd = cmd;
-              }
+              ggbAppletInstance.refreshViews();
+            } finally {
+              console.error = origError;
             }
-            ggbAppletInstance.refreshViews();
+
+            // 构建错误描述（含 GeoGebra 内部错误文本）
+            const geoErrorText = capturedErrors.length > 0
+              ? capturedErrors.join("; ").substring(0, 300)
+              : "";
 
             // 二次验证：如果没有任何新对象产生且没有可见效果
             const afterCount: number =
@@ -1035,10 +1051,8 @@ export default function GeoGebraScreen() {
               /^\s*[A-Za-z_][A-Za-z0-9_]*\s*=/.test(c)
             );
             if (!allOk || (beforeCount === afterCount && !hasAssignment && subCommands.some((c) => !c.startsWith("Set") && !c.startsWith("Delete")))) {
-              return {
-                success: false,
-                error: allOk ? `命令未产生可见效果: ${failedCmd || command}` : `命令执行失败: ${failedCmd}`,
-              };
+              const errDetail = geoErrorText || (allOk ? `命令未产生可见效果: ${failedCmd || command}` : `命令执行失败: ${failedCmd}`);
+              return { success: false, error: errDetail };
             }
             return { success: true };
           } catch (e: any) {

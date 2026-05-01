@@ -237,24 +237,26 @@ export function generateMobileCommandScript(command: string): string {
     return `(function(){try{window.ReactNativeWebView.postMessage(JSON.stringify({type:"commandResult",success:false,error:"Empty command"}));}catch(e){}})();`;
   }
 
-  // 生成每条命令的执行代码（含对象创建验证）
+  // 生成每条命令的执行代码（含 console.error 捕获和对象创建验证）
   const execStatements = commands
     .map((cmd, i) => {
       const escaped = cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       const safeDisplay = cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      // 检查是否为赋值命令，提取变量名用于后续验证
       const assignCheck = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(cmd.trim());
       const varName = assignCheck && !cmd.trim().startsWith("Delete") ? assignCheck[1] : null;
-      let stmt = `r=ggbApplet.evalCommand("${escaped}");`;
-      stmt += `if(r!==true){ok=false;err="Failed: ${safeDisplay}";}`;
+      // 用临时变量存 console.error 返回值以便捕获错误文本
+      let stmt = `{var _oe=console.error;var _ce="";console.error=function(){_ce+=Array.prototype.slice.call(arguments).join(" ");_oe.apply(console,arguments);};`;
+      stmt += `r=ggbApplet.evalCommand("${escaped}");`;
+      stmt += `console.error=_oe;`;
+      stmt += `if(r!==true){ok=false;err=_ce||"Failed: ${safeDisplay}";}`;
       if (varName) {
         stmt += `else{var t=ggbApplet.getObjectType("${varName}");if(!t){ok=false;err="Not created: ${varName}";}}`;
       }
+      stmt += `}`;
       return stmt;
     })
     .join("");
 
-  // 比较执行前后的对象计数
   const beforeCount = `var bc=typeof ggbApplet.getObjectNumber==="function"?ggbApplet.getObjectNumber():0;`;
   const afterCheck = `var ac=typeof ggbApplet.getObjectNumber==="function"?ggbApplet.getObjectNumber():0;`;
   const countCheck = `if(ok&&bc===ac){var hasAssign=/^\\s*[A-Za-z_][A-Za-z0-9_]*\\s*=/.test("${commands[0].replace(/\\/g, "\\\\").replace(/"/g, '\\"')}");if(!hasAssign){ok=false;err="No visible effect";}}`;
