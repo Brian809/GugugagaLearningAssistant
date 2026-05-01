@@ -431,14 +431,24 @@ export async function analyzeImageWithSteps(
 返回每个对象的名称、类型、值和定义命令。根据查询结果决定修改哪些对象。
 
 ## 修改对象
-- 修改颜色：SetColor(A, "red")  颜色可选: red, blue, green, yellow, orange, purple, black, white, gray, pink, cyan
-- 修改颜色 RGB：SetColor(A, 1, 0, 0)  参数范围 0-1
-- 删除对象：Delete[A]  删除点A，或 Delete[s] 删除线段s
-- 隐藏/显示：SetVisibleInView(A, 1, false)  1=主视图, 2=代数视图
-- 修改标签：SetCaption(s, "我的线段")
-- 修改线宽：SetLineThickness(s, 3)
-- 修改点大小：SetPointSize(A, 5)
-- 修改填充：SetFilling(s, 0.5)  透明度 0-1`;
+### 颜色（重要：多次尝试的常见错因）
+- 颜色名：SetColor(A, "red")
+  - 可用颜色名 (英文): black, dark gray, gray, dark blue, blue, dark green, green, maroon, crimson, red, magenta, indigo, purple, brown, orange, gold, lime, cyan, turquoise, light blue, pink, violet, yellow, white
+- RGB（0~1 之间！）：SetColor(A, 1, 0, 0)  红色；SetColor(A, 0, 0.5, 0)  暗绿
+  - 注意 RGB 范围是 0~1，不是 0~255！传 255 会得到错误的颜色。
+- 十六进制（推荐）：SetColor(A, "#FF0000")  红色；SetColor(A, "#00FF00")  绿色；SetColor(A, "#0000FF")  蓝色
+  - 带透明度：SetColor(A, "#80FF0000")  半透明红
+- 动态颜色冲突：如果对象属性中启用了"动态颜色"，SetColor 会静默失效。此时先禁用：SetDynamicColor(A, 0, 0, 0)
+- 填充色：SetFilling(s, 1)  填充多边形。如果先调 SetFilling 再调 SetColor，SetColor 控制的是边框色。
+
+### 其他修改
+- 删除对象：Delete[A]  删除点A
+- 隐藏：SetVisibleInView(A, 1, false)；显示：SetVisibleInView(A, 1, true)
+- 标签：SetCaption(s, "名称")；隐藏标签：ShowLabel(A, false)
+- 线宽：SetLineThickness(s, 5)  范围 1-13
+- 点大小：SetPointSize(A, 6)  范围 1-9
+- 线型：SetLineStyle(s, 1)  0=实线, 1=虚线, 2=点线, 3=点划线
+- 透明度：SetFilling(s, 0.3)  0=不透明, 1=全透明`;
 
   let finalResult: { description: string; elements: unknown[]; suggestedSteps: string[] } | null = null;
   const allSteps: string[] = [];
@@ -759,14 +769,24 @@ export async function generateFromDescriptionWithSteps(
 返回每个对象的名称、类型、值和定义命令。根据查询结果决定修改哪些对象。
 
 ## 修改对象
-- 修改颜色：SetColor(A, "red")  颜色可选: red, blue, green, yellow, orange, purple, black, white, gray, pink, cyan
-- 修改颜色 RGB：SetColor(A, 1, 0, 0)  参数范围 0-1
-- 删除对象：Delete[A]  删除点A，或 Delete[s] 删除线段s
-- 隐藏/显示：SetVisibleInView(A, 1, false)  1=主视图, 2=代数视图
-- 修改标签：SetCaption(s, "我的线段")
-- 修改线宽：SetLineThickness(s, 3)
-- 修改点大小：SetPointSize(A, 5)
-- 修改填充：SetFilling(s, 0.5)  透明度 0-1`;
+### 颜色（重要：多次尝试的常见错因）
+- 颜色名：SetColor(A, "red")
+  - 可用颜色名 (英文): black, dark gray, gray, dark blue, blue, dark green, green, maroon, crimson, red, magenta, indigo, purple, brown, orange, gold, lime, cyan, turquoise, light blue, pink, violet, yellow, white
+- RGB（0~1 之间！）：SetColor(A, 1, 0, 0)  红色；SetColor(A, 0, 0.5, 0)  暗绿
+  - 注意 RGB 范围是 0~1，不是 0~255！传 255 会得到错误的颜色。
+- 十六进制（推荐）：SetColor(A, "#FF0000")  红色；SetColor(A, "#00FF00")  绿色；SetColor(A, "#0000FF")  蓝色
+  - 带透明度：SetColor(A, "#80FF0000")  半透明红
+- 动态颜色冲突：如果对象属性中启用了"动态颜色"，SetColor 会静默失效。此时先禁用：SetDynamicColor(A, 0, 0, 0)
+- 填充色：SetFilling(s, 1)  填充多边形。如果先调 SetFilling 再调 SetColor，SetColor 控制的是边框色。
+
+### 其他修改
+- 删除对象：Delete[A]  删除点A
+- 隐藏：SetVisibleInView(A, 1, false)；显示：SetVisibleInView(A, 1, true)
+- 标签：SetCaption(s, "名称")；隐藏标签：ShowLabel(A, false)
+- 线宽：SetLineThickness(s, 5)  范围 1-13
+- 点大小：SetPointSize(A, 6)  范围 1-9
+- 线型：SetLineStyle(s, 1)  0=实线, 1=虚线, 2=点线, 3=点划线
+- 透明度：SetFilling(s, 0.3)  0=不透明, 1=全透明`;
 
   let finalResult: { description: string; elements: unknown[]; suggestedSteps: string[] } | null = null;
   const allSteps: string[] = [];
