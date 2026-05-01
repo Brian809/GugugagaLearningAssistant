@@ -22,6 +22,9 @@
 
 ```
 ├── app/                          # Expo Router 路由 (文件路由)
+│   ├── (learning)/               # 学习功能组
+│   │   ├── explain.tsx           # AI讲解 - 对话历史 + ChatPanel
+│   │   └── solve.tsx             # AI解题 - 对话历史 + StepVisualizer
 │   └── (tabs)/                   # Tab 导航组
 │       ├── _layout.tsx           # Tab 布局配置 (4个Tab)
 │       ├── index.tsx             # 首页 - 欢迎页 + 功能卡片
@@ -30,14 +33,20 @@
 │       ├── geogebra.tsx          # GeoGebra 几何画板 + AI助手 (核心功能)
 │       └── test-store.tsx        # LLM Provider Store 测试页
 ├── components/
-│   └── SettingsSection.tsx       # LLM提供商设置组件 (完整CRUD UI)
+│   ├── SettingsSection.tsx       # LLM提供商设置组件 (完整CRUD UI)
+│   └── ConversationList.tsx      # 对话历史列表 Modal (通用组件)
 ├── stores/
-│   └── llmProviderStore.ts       # Zustand 状态管理 - LLM提供商管理
+│   ├── llmProviderStore.ts       # Zustand 状态管理 - LLM提供商管理
+│   └── conversationStore.ts      # Zustand 状态管理 - 对话历史 CRUD
 ├── utils/
 │   ├── llmProviders.ts           # LLM提供商类型定义 + Zod校验 + CRUD函数
 │   ├── modelFetcher.ts           # 动态获取提供商模型列表
 │   ├── storage.ts                # 跨平台存储封装 (SecureStore/localStorage)
-│   └── geogebraAgent.ts          # AI驱动的GeoGebra指令生成 (function calling)
+│   ├── createLearningClient.ts   # 共享 AI 客户端工厂 (createOpenAI/createOpenRouter)
+│   ├── geogebraAgent.ts          # AI驱动的GeoGebra指令生成 (function calling)
+│   ├── solveAgent.ts             # AI解题代理 (function calling 逐步推理)
+│   ├── explainAgent.ts           # AI讲解系统提示词
+│   └── useExplainChat.ts         # 讲解模式 Chat Hook (带对话持久化)
 ├── assets/images/                # 静态资源
 ├── app.json                      # Expo 配置
 ├── eas.json                      # EAS Build 配置
@@ -72,9 +81,32 @@
 - **SUPPORTED_MODELS**: 内置模型列表 (GPT-4.1/4o/o3/o4-mini, Claude Opus/Sonnet/Haiku, Qwen, Kimi, Gemini)
 - **规则**: 只能有一个活跃的提供商
 
-### 3. GeoGebra AI 助手 (核心功能)
-- **页面**: `app/(tabs)/geogebra.tsx` (~1268行)
-- **AI Agent**: `utils/geogebraAgent.ts` (~770行)
+### 3. 对话历史系统 (Conversation System)
+- **Store**: `stores/conversationStore.ts` - Zustand store
+- **组件**: `components/ConversationList.tsx` - Modal 列表 UI
+- **数据库表**: `conversations` (id, type, title, messages, created_at, updated_at)
+- **持久化**: Web = localStorage, 移动端 = SQLite (Drizzle ORM)
+- **Store API**:
+  - `loadConversations(type)` - 按类型加载对话列表
+  - `createConversation(type, title)` → `id` - 创建新对话
+  - `deleteConversation(id)` - 删除对话
+  - `appendMessages(id, msgs[])` - 追加消息
+  - `replaceMessages(id, msgs[])` - 替换全部消息
+  - `updateTitle(id, title)` - 更新标题
+- **支持三种类型**: `explain` (讲解), `solve` (解题), `geogebra` (几何绘图)
+- **集成页面**: explain.tsx, solve.tsx, geogebra.tsx, ChatPanel.tsx
+- **特性**:
+  - 每个页面顶部 "对话历史" 按钮 → 弹出 Modal 列表
+  - 长按/点击删除图标可删除对话
+  - 新建对话自动生成 ID 并激活
+  - 切换对话时加载对应历史消息
+  - 支持取消/中止进行中的 AI 请求 (AbortController)
+  - 加载中按钮变为红色停止按钮 (Stop → Abort)
+
+### 4. GeoGebra AI 助手 (核心功能)
+- **页面**: `app/(tabs)/geogebra.tsx` (~1350行)
+- **AI Agent**: `utils/geogebraAgent.ts` (~500行, 已重构)
+- **共享客户端**: `utils/createLearningClient.ts` - `createAIClient`, `getModelName`, `isOpenRouterProvider` (与 solveAgent/useExplainChat 共享)
 - **功能**:
   - 通过 AI function calling 分步执行 GeoGebra 命令
   - 支持图片分析 (多模态) → 几何图形重建
@@ -85,9 +117,10 @@
 - **布局**: 大屏/横屏 = 左右布局 (35%聊天 + 65%画板), 小屏 = 上下布局
 - **工具定义**: `execute_geo_gebra_step` + `complete_geo_gebra_task`
 - **最大步骤**: 50步
-- **旧版 API**: `analyzeImageForGeoGebra`, `generateGeoGebraFromDescription` (已标记 deprecated)
+- **新增参数**: `signal` (AbortSignal 支持取消), `historyMessages` (多轮对话上下文)
+- **GeoGebra 命令改进**: Intersect 用法说明, 垂足方案, 避免常见错误
 
-### 4. 模型获取 (modelFetcher)
+### 5. 模型获取 (modelFetcher)
 - 动态从提供商 API 获取可用模型列表
 - 支持解析 OpenAI/Anthropic/Google 格式的响应
 - 按提供商类型分类推荐模型
@@ -114,6 +147,12 @@ await Storage.deleteItemAsync("key");
 // 使用 create() + 工厂函数模式
 // 所有异步操作自动保存到存储
 // 提供便捷 hooks: useLLMProviders, useActiveLLMProvider, useLLMProvidersLoading
+
+// stores/conversationStore.ts
+// 对话历史 CRUD store
+// 跨平台持久化: Web → localStorage, 移动端 → SQLite (Drizzle ORM)
+// 异步操作后自动更新内存状态 + 持久化存储
+// 便捷 hooks: useConversationList, useActiveConversationId, useConversationLoading
 ```
 
 ### AI SDK 使用
