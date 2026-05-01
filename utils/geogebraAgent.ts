@@ -278,25 +278,25 @@ export function generateMobileCommandScript(command: string): string {
 
       // SetColor 用 JS API setColor()
       if (/^SetColou?r\s*\(/i.test(trimmed)) {
-        let stmt = `{try{`;
+        let stmt = `{var _ce="";var _oe=console.error;console.error=function(){_ce+=Array.prototype.slice.call(arguments).join(" ");_oe.apply(console,arguments);};try{`;
         stmt += `var m="${escaped}".match(/^SetColou?r\\s*\\(\\s*(\\w[\\w.]*)\\s*,\\s*(.+?)\\s*\\)$/i);`;
         stmt += `if(m&&ggbApplet.setColor){var rgb=_parseColor(m[2]);if(rgb)ggbApplet.setColor(m[1],rgb[0],rgb[1],rgb[2]);}`;
         stmt += `else{ggbApplet.evalCommand("${escaped}");}`;
-        stmt += `}catch(e){ggbApplet.evalCommand("${escaped}");}}`;
+        stmt += `}catch(e){_ce=e.toString();}console.error=_oe;if(_ce){ok=false;err=_ce;}}`;
         return stmt;
       }
       // SetFilling 用 JS API setFilling()
       if (/^SetFilling\s*\(/i.test(trimmed)) {
-        let stmt = `{try{`;
+        let stmt = `{var _ce="";var _oe=console.error;console.error=function(){_ce+=Array.prototype.slice.call(arguments).join(" ");_oe.apply(console,arguments);};try{`;
         stmt += `var m="${escaped}".match(/^SetFilling\\s*\\(\\s*(\\w[\\w.]*)\\s*,\\s*([\\d.]+)\\s*\\)$/i);`;
         stmt += `if(m&&ggbApplet.setFilling){ggbApplet.setFilling(m[1],parseFloat(m[2]));}`;
         stmt += `else{ggbApplet.evalCommand("${escaped}");}`;
-        stmt += `}catch(e){ggbApplet.evalCommand("${escaped}");}}`;
+        stmt += `}catch(e){_ce=e.toString();}console.error=_oe;if(_ce){ok=false;err=_ce;}}`;
         return stmt;
       }
-      // 视觉类命令（Set*/Show*）：走 evalCommand 但不检查返回值
+      // 视觉类命令（Set*/Show*）：走 evalCommand，忽略返回值，但捕获 console.error
       if (isVisualCmd) {
-        return `{try{ggbApplet.evalCommand("${escaped}");}catch(e){}}`;
+        return `{var _ce="";var _oe=console.error;console.error=function(){_ce+=Array.prototype.slice.call(arguments).join(" ");_oe.apply(console,arguments);};try{ggbApplet.evalCommand("${escaped}");}catch(e){_ce=e.toString();}console.error=_oe;if(_ce){ok=false;err=_ce;}}`;
       }
       // 常规命令走 evalCommand + 错误检查
       let stmt = `{var _oe=console.error;var _ce="";console.error=function(){_ce+=Array.prototype.slice.call(arguments).join(" ");_oe.apply(console,arguments);};`;

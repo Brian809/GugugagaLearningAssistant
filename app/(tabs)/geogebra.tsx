@@ -1095,6 +1095,9 @@ export default function GeoGebraScreen() {
                   /^Set(C|F|V|C|L|P|D)/.test(cmd.trim()) ||
                   /^Show/.test(cmd.trim());
 
+                // 执行前清空 console.error 缓冲，以便精确捕获当前命令的错误
+                const beforeErrCount = capturedErrors.length;
+
                 // SetColor 用 JS API setColor() 更可靠
                 const setColorMatch = cmd.match(
                   /^SetColou?r\s*\(\s*(\w[\w.]*)\s*,\s*(.+?)\s*\)$/i
@@ -1106,8 +1109,17 @@ export default function GeoGebraScreen() {
                   try {
                     const [r, g, b] = parseSetColorArg(setColorMatch[2]);
                     ggbAppletInstance.setColor(setColorMatch[1], r, g, b);
+                    // 检查 JS API 调用后是否产生了 console.error
+                    if (capturedErrors.length > beforeErrCount) {
+                      allOk = false;
+                      failedCmd = `${cmd} (GeoGebra: ${capturedErrors[0]?.substring(0, 100)})`;
+                    }
                     continue;
-                  } catch { /* fall through to evalCommand */ }
+                  } catch (e: any) {
+                    allOk = false;
+                    failedCmd = `${cmd} (${e?.message || "解析失败"})`;
+                    continue;
+                  }
                 }
 
                 // SetFilling 用 JS API setFilling() 更可靠
@@ -1123,8 +1135,16 @@ export default function GeoGebraScreen() {
                       setFillingMatch[1],
                       parseFloat(setFillingMatch[2])
                     );
+                    if (capturedErrors.length > beforeErrCount) {
+                      allOk = false;
+                      failedCmd = `${cmd} (GeoGebra: ${capturedErrors[0]?.substring(0, 100)})`;
+                    }
                     continue;
-                  } catch { /* fall through */ }
+                  } catch (e: any) {
+                    allOk = false;
+                    failedCmd = `${cmd} (${e?.message || "setFilling 失败"})`;
+                    continue;
+                  }
                 }
 
                 const evalOk: boolean = ggbAppletInstance.evalCommand(cmd);
@@ -1137,8 +1157,13 @@ export default function GeoGebraScreen() {
                     if (!objType) objectCreated = false;
                   }
                 }
-                // 视觉类命令（Set*/Show*）不检查返回值，直接成功
-                if (!isVisualCmd && (evalOk === false || !objectCreated)) {
+                // 视觉类命令（Set*/Show*）：忽略 evalCommand 返回值，只看 console.error
+                if (isVisualCmd) {
+                  if (capturedErrors.length > beforeErrCount) {
+                    allOk = false;
+                    failedCmd = `${cmd} (GeoGebra: ${capturedErrors[0]?.substring(0, 100)})`;
+                  }
+                } else if (evalOk === false || !objectCreated) {
                   allOk = false;
                   failedCmd = cmd;
                 }
