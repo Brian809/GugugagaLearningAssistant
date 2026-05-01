@@ -542,7 +542,20 @@ export async function analyzeImageWithSteps(
         command: string;
         description: string;
         expectedResult: string;
-      };
+      } | undefined;
+
+      if (!args?.command) {
+        console.warn("execute_geo_gebra_step 缺少 input 或 command，响应:", JSON.stringify(toolCall).substring(0, 200));
+        messages.push({
+          role: "assistant",
+          content: result.text || JSON.stringify(toolCall),
+        });
+        messages.push({
+          role: "user",
+          content: [{ type: "text", text: "工具调用缺少 command 参数。请重新调用 execute_geo_gebra_step 并提供完整的 stepNumber、totalSteps、command、description、expectedResult。" }],
+        });
+        continue;
+      }
 
       console.log(`执行步骤 ${args.stepNumber}/${args.totalSteps}: ${args.command}`);
       allSteps.push(`${args.stepNumber}. ${args.description}: ${args.command}`);
@@ -582,7 +595,20 @@ export async function analyzeImageWithSteps(
         finalDescription: string;
         finalElements: string[];
         finalSteps: string[];
-      };
+      } | undefined;
+
+      if (!args?.finalDescription) {
+        console.warn("complete_geo_gebra_task 缺少 input，响应:", JSON.stringify(toolCall).substring(0, 200));
+        messages.push({
+          role: "assistant",
+          content: result.text || JSON.stringify(toolCall),
+        });
+        messages.push({
+          role: "user",
+          content: [{ type: "text", text: "工具调用缺少参数。请重新调用 complete_geo_gebra_task 并提供 finalDescription、finalElements、finalSteps。" }],
+        });
+        continue;
+      }
 
       finalResult = {
         description: args.finalDescription,
@@ -849,7 +875,20 @@ export async function generateFromDescriptionWithSteps(
         command: string;
         description: string;
         expectedResult: string;
-      };
+      } | undefined;
+
+      if (!args?.command) {
+        console.warn("execute_geo_gebra_step 缺少 input 或 command，响应:", JSON.stringify(toolCall).substring(0, 200));
+        messages.push({
+          role: "assistant",
+          content: result.text || JSON.stringify(toolCall),
+        });
+        messages.push({
+          role: "user",
+          content: [{ type: "text", text: "工具调用缺少 command 参数。请重新调用 execute_geo_gebra_step 并提供完整的 stepNumber、totalSteps、command、description、expectedResult。" }],
+        });
+        continue;
+      }
 
       console.log(`执行步骤 ${args.stepNumber}/${args.totalSteps}: ${args.command}`);
       allSteps.push(`${args.stepNumber}. ${args.description}: ${args.command}`);
@@ -882,7 +921,20 @@ export async function generateFromDescriptionWithSteps(
         finalDescription: string;
         finalElements: string[];
         finalSteps: string[];
-      };
+      } | undefined;
+
+      if (!args?.finalDescription) {
+        console.warn("complete_geo_gebra_task 缺少 input，响应:", JSON.stringify(toolCall).substring(0, 200));
+        messages.push({
+          role: "assistant",
+          content: result.text || JSON.stringify(toolCall),
+        });
+        messages.push({
+          role: "user",
+          content: [{ type: "text", text: "工具调用缺少参数。请重新调用 complete_geo_gebra_task 并提供 finalDescription、finalElements、finalSteps。" }],
+        });
+        continue;
+      }
 
       finalResult = {
         description: args.finalDescription,
