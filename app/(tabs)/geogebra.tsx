@@ -94,10 +94,12 @@ function AIChatPanel({
   webViewRef,
   executeGeoGebraCommand,
   getCanvasState,
+  resetCanvas,
 }: {
   webViewRef: React.RefObject<any>;
   executeGeoGebraCommand: (command: string) => Promise<CommandResult>;
   getCanvasState: () => Promise<{ objects: CanvasObject[] }>;
+  resetCanvas: () => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -461,6 +463,7 @@ function AIChatPanel({
         onSelect={(id) => setConversationId(id)}
         onCreateNew={() => {
           setConversationId(null);
+          resetCanvas();
           setMessages([{
             id: "1",
             role: "assistant",
@@ -1160,6 +1163,28 @@ export default function GeoGebraScreen() {
     []
   );
 
+  // 重置画布（新建对话时清除所有对象）
+  const resetCanvas = useCallback(() => {
+    if (Platform.OS === "web") {
+      if (
+        ggbAppletInstance &&
+        typeof ggbAppletInstance.getAllObjectNames === "function"
+      ) {
+        try {
+          const names: string[] = ggbAppletInstance.getAllObjectNames();
+          for (const name of names) {
+            try { ggbAppletInstance.evalCommand(`Delete[${name}]`); } catch {}
+          }
+          ggbAppletInstance.refreshViews();
+        } catch {}
+      }
+    } else if (webViewRef.current) {
+      webViewRef.current.injectJavaScript(
+        `(function(){try{var ggb=window.ggbApplet;if(ggb&&ggb.getAllObjectNames){var n=ggb.getAllObjectNames();for(var i=0;i<n.length;i++){try{ggb.evalCommand('Delete['+n[i]+']');}catch(e){}}ggb.refreshViews();}}catch(e){}})();`
+      );
+    }
+  }, []);
+
   // 移动端命令结果回调（由 GeoGebraPanel.handleMessage 触发）
   const onCommandResult = useCallback(
     (result: CommandResult) => {
@@ -1213,6 +1238,7 @@ export default function GeoGebraScreen() {
                 webViewRef={webViewRef}
                 executeGeoGebraCommand={executeGeoGebraCommand}
                 getCanvasState={getCanvasState}
+                resetCanvas={resetCanvas}
               />
             </View>
             <View style={[styles.rightPanel, { width: width * 0.65 }]}>
@@ -1248,6 +1274,7 @@ export default function GeoGebraScreen() {
               webViewRef={webViewRef}
               executeGeoGebraCommand={executeGeoGebraCommand}
               getCanvasState={getCanvasState}
+              resetCanvas={resetCanvas}
             />
           </View>
         </View>
