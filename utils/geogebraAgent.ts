@@ -271,20 +271,34 @@ export function generateMobileCommandScript(command: string): string {
     .map((cmd) => {
       const escaped = cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       const safeDisplay = cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      const assignCheck = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(cmd.trim());
-      const varName = assignCheck && !cmd.trim().startsWith("Delete") ? assignCheck[1] : null;
-      // SetColor 用 JS API setColor() 避免 evalCommand 对颜色命令不稳定
-      if (/^SetColou?r\s*\(/i.test(cmd.trim())) {
+      const trimmed = cmd.trim();
+      const assignCheck = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(trimmed);
+      const varName = assignCheck && !trimmed.startsWith("Delete") ? assignCheck[1] : null;
+      const isVisualCmd = /^Set(C|F|V|C|L|P|D)/.test(trimmed) || /^Show/.test(trimmed);
+
+      // SetColor 用 JS API setColor()
+      if (/^SetColou?r\s*\(/i.test(trimmed)) {
         let stmt = `{try{`;
         stmt += `var m="${escaped}".match(/^SetColou?r\\s*\\(\\s*(\\w[\\w.]*)\\s*,\\s*(.+?)\\s*\\)$/i);`;
-        stmt += `if(m&&ggbApplet.setColor){`;
-        stmt += `var rgb=_parseColor(m[2]);`;
-        stmt += `if(rgb)ggbApplet.setColor(m[1],rgb[0],rgb[1],rgb[2]);`;
-        stmt += `}else{ggbApplet.evalCommand("${escaped}");}`;
+        stmt += `if(m&&ggbApplet.setColor){var rgb=_parseColor(m[2]);if(rgb)ggbApplet.setColor(m[1],rgb[0],rgb[1],rgb[2]);}`;
+        stmt += `else{ggbApplet.evalCommand("${escaped}");}`;
         stmt += `}catch(e){ggbApplet.evalCommand("${escaped}");}}`;
         return stmt;
       }
-      // 常规命令走 evalCommand
+      // SetFilling 用 JS API setFilling()
+      if (/^SetFilling\s*\(/i.test(trimmed)) {
+        let stmt = `{try{`;
+        stmt += `var m="${escaped}".match(/^SetFilling\\s*\\(\\s*(\\w[\\w.]*)\\s*,\\s*([\\d.]+)\\s*\\)$/i);`;
+        stmt += `if(m&&ggbApplet.setFilling){ggbApplet.setFilling(m[1],parseFloat(m[2]));}`;
+        stmt += `else{ggbApplet.evalCommand("${escaped}");}`;
+        stmt += `}catch(e){ggbApplet.evalCommand("${escaped}");}}`;
+        return stmt;
+      }
+      // 视觉类命令（Set*/Show*）：走 evalCommand 但不检查返回值
+      if (isVisualCmd) {
+        return `{try{ggbApplet.evalCommand("${escaped}");}catch(e){}}`;
+      }
+      // 常规命令走 evalCommand + 错误检查
       let stmt = `{var _oe=console.error;var _ce="";console.error=function(){_ce+=Array.prototype.slice.call(arguments).join(" ");_oe.apply(console,arguments);};`;
       stmt += `r=ggbApplet.evalCommand("${escaped}");`;
       stmt += `console.error=_oe;`;

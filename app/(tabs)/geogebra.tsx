@@ -1091,7 +1091,11 @@ export default function GeoGebraScreen() {
             let failedCmd = "";
             try {
               for (const cmd of subCommands) {
-                // SetColor 使用 JS API setColor() 避免 evalCommand 对颜色命令返回值不稳定
+                const isVisualCmd =
+                  /^Set(C|F|V|C|L|P|D)/.test(cmd.trim()) ||
+                  /^Show/.test(cmd.trim());
+
+                // SetColor 用 JS API setColor() 更可靠
                 const setColorMatch = cmd.match(
                   /^SetColou?r\s*\(\s*(\w[\w.]*)\s*,\s*(.+?)\s*\)$/i
                 );
@@ -1102,10 +1106,25 @@ export default function GeoGebraScreen() {
                   try {
                     const [r, g, b] = parseSetColorArg(setColorMatch[2]);
                     ggbAppletInstance.setColor(setColorMatch[1], r, g, b);
-                    continue; // 跳过 evalCommand，已通过 JS API 执行
-                  } catch {
-                    // 解析失败，回退到 evalCommand
-                  }
+                    continue;
+                  } catch { /* fall through to evalCommand */ }
+                }
+
+                // SetFilling 用 JS API setFilling() 更可靠
+                const setFillingMatch = cmd.match(
+                  /^SetFilling\s*\(\s*(\w[\w.]*)\s*,\s*([\d.]+)\s*\)$/i
+                );
+                if (
+                  setFillingMatch &&
+                  typeof ggbAppletInstance.setFilling === "function"
+                ) {
+                  try {
+                    ggbAppletInstance.setFilling(
+                      setFillingMatch[1],
+                      parseFloat(setFillingMatch[2])
+                    );
+                    continue;
+                  } catch { /* fall through */ }
                 }
 
                 const evalOk: boolean = ggbAppletInstance.evalCommand(cmd);
@@ -1118,7 +1137,8 @@ export default function GeoGebraScreen() {
                     if (!objType) objectCreated = false;
                   }
                 }
-                if (evalOk === false || !objectCreated) {
+                // 视觉类命令（Set*/Show*）不检查返回值，直接成功
+                if (!isVisualCmd && (evalOk === false || !objectCreated)) {
                   allOk = false;
                   failedCmd = cmd;
                 }
