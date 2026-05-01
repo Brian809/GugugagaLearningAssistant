@@ -1,4 +1,4 @@
-import "../app/polyfills";
+import "../polyfills";
 import { Stack } from "expo-router";
 
 export default function AppLayout() {

@@ -62,13 +62,7 @@ export default function ProfileScreen() {
         </View>
 
         {/* LLM提供商设置部分 */}
-        <View style={styles.settingsSection}>
-          <Text style={styles.sectionTitle}>LLM提供商设置</Text>
-          <Text style={styles.sectionSubtitle}>
-            管理您的API提供商，只能有一个活跃提供商
-          </Text>
-          <SettingsSection />
-        </View>
+        <SettingsSection />
 
         {/* 关于部分 */}
         <View style={styles.aboutSection}>
@@ -143,11 +137,6 @@ const styles = StyleSheet.create({
     color: "#333",
     marginBottom: 12,
   },
-  sectionSubtitle: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 16,
-  },
   menuList: {
     gap: 12,
   },
@@ -164,11 +153,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#333",
     marginLeft: 12,
-  },
-  settingsSection: {
-    backgroundColor: "#fff",
-    marginTop: 16,
-    padding: 20,
   },
   aboutSection: {
     backgroundColor: "#fff",

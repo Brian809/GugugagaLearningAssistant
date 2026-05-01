@@ -271,13 +271,6 @@ export default function SettingsSection() {
   return (
     <View style={styles.container}>
       <ScrollView style={styles.scrollView}>
-        <View style={styles.header}>
-          <Text style={styles.title}>LLM提供商设置</Text>
-          <Text style={styles.subtitle}>
-            管理您的API提供商设置，只能有一个活跃提供商。
-          </Text>
-        </View>
-
         {activeProvider && (
           <View style={styles.activeCard}>
             <View style={styles.activeHeader}>
@@ -443,8 +436,6 @@ export default function SettingsSection() {
                     { id: "openAiCompatible", label: "OpenAI 兼容" },
                     { id: "anthropicCompatible", label: "Anthropic 兼容" },
                     { id: "googleCompatible", label: "Google 兼容" },
-                    { id: "qwenCompatible", label: "通义千问" },
-                    { id: "kimiCompatible", label: "Kimi" },
                   ].map((type) => (
                     <TouchableOpacity
                       key={type.id}
@@ -610,22 +601,6 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
-  },
-  header: {
-    padding: 20,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e5ea",
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: "#666",
   },
   activeCard: {
     margin: 20,

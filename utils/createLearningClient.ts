@@ -26,7 +26,5 @@ export function getModelName(provider: LLMProvider, requireMultimodal = false): 
   if (providerType.includes("openai")) return "gpt-4o";
   if (providerType.includes("anthropic")) return "claude-sonnet-4-20250514";
   if (providerType.includes("google")) return "gemini-2.0-flash";
-  if (providerType.includes("qwen")) return "qwen-max";
-  if (providerType.includes("kimi")) return "moonshot-v1-8k";
   return "gpt-4o";
 }

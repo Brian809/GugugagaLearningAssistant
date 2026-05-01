@@ -45,8 +45,6 @@ export const LLMProviderSchema = z.object({
     "anthropicCompatible",
     "openAiCompatible",
     "googleCompatible",
-    "qwenCompatible",
-    "kimiCompatible",
   ]),
   modelName: z.string().optional(), // 用户选择的模型名称
   isActive: z.boolean(),
