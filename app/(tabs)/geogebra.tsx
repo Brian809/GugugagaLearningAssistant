@@ -169,11 +169,13 @@ function AIChatPanel({
   executeGeoGebraCommand,
   getCanvasState,
   resetCanvas,
+  exportGGB,
 }: {
   webViewRef: React.RefObject<any>;
   executeGeoGebraCommand: (command: string) => Promise<CommandResult>;
   getCanvasState: () => Promise<{ objects: CanvasObject[] }>;
   resetCanvas: () => void;
+  exportGGB: () => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -468,6 +470,7 @@ function AIChatPanel({
       <View style={styles.toolsContainer}>
         <ToolButton icon="image" label="相册" onPress={pickImage} color="#34C759" />
         <ToolButton icon="camera" label="拍照" onPress={takePhoto} color="#FF9500" />
+        <ToolButton icon="download" label="导出" onPress={exportGGB} color="#007AFF" />
       </View>
 
       {/* 消息列表 */}
@@ -1316,6 +1319,45 @@ export default function GeoGebraScreen() {
     }
   }, []);
 
+  // 导出 GGB 文件
+  const exportGGB = useCallback(() => {
+    if (Platform.OS === "web") {
+      if (
+        ggbAppletInstance &&
+        typeof ggbAppletInstance.getBase64 === "function"
+      ) {
+        try {
+          const base64 = ggbAppletInstance.getBase64();
+          const byteChars = atob(base64);
+          const bytes = new Uint8Array(byteChars.length);
+          for (let i = 0; i < byteChars.length; i++)
+            bytes[i] = byteChars.charCodeAt(i);
+          const blob = new Blob([bytes], {
+            type: "application/vnd.geogebra.file",
+          });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "construction.ggb";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          console.error("Export GGB failed:", e);
+          alert("导出失败");
+        }
+      }
+    } else if (webViewRef.current) {
+      // 移动端：注入脚本获取 base64，通过 postMessage 传回
+      webViewRef.current.injectJavaScript(
+        `(function(){try{var b64=window.ggbApplet.getBase64();window.ReactNativeWebView.postMessage(JSON.stringify({type:'ggbExport',base64:b64}));}catch(e){window.ReactNativeWebView.postMessage(JSON.stringify({type:'ggbExport',error:e.toString()}));}})();`
+      );
+      // TODO: 在 handleMessage 中接收 ggbExport 消息并保存/分享文件
+      alert("移动端导出功能开发中，请使用分享菜单");
+    }
+  }, []);
+
   // 移动端命令结果回调（由 GeoGebraPanel.handleMessage 触发）
   const onCommandResult = useCallback(
     (result: CommandResult) => {
@@ -1370,6 +1412,7 @@ export default function GeoGebraScreen() {
                 executeGeoGebraCommand={executeGeoGebraCommand}
                 getCanvasState={getCanvasState}
                 resetCanvas={resetCanvas}
+                exportGGB={exportGGB}
               />
             </View>
             <View style={[styles.rightPanel, { width: width * 0.65 }]}>
@@ -1406,6 +1449,7 @@ export default function GeoGebraScreen() {
               executeGeoGebraCommand={executeGeoGebraCommand}
               getCanvasState={getCanvasState}
               resetCanvas={resetCanvas}
+              exportGGB={exportGGB}
             />
           </View>
         </View>
