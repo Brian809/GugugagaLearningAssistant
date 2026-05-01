@@ -579,12 +579,23 @@ export async function analyzeImageWithSteps(
         expectedResult: args.expectedResult,
       });
 
-      const definedVariables = allCommands
-        .map(cmd => {
-          const match = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
-          return match ? match[1] : null;
-        })
-        .filter(Boolean);
+      // 从画布实时获取对象列表，而非依赖命令历史（历史在 Delete 后会过时）
+      let liveObjects = "";
+      if (onGetCanvasState) {
+        try {
+          const state = await onGetCanvasState();
+          liveObjects = state.objects.length > 0
+            ? state.objects.map(o => `${o.name}(${o.type})`).join(", ")
+            : "无";
+        } catch {
+          liveObjects = "查询失败";
+        }
+      } else {
+        const definedVariables = allCommands
+          .map(cmd => { const m = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/); return m ? m[1] : null; })
+          .filter(Boolean);
+        liveObjects = definedVariables.join(", ") || "无";
+      }
 
       messages.push({
         role: "assistant",
@@ -596,7 +607,7 @@ export async function analyzeImageWithSteps(
         content: [
           {
             type: "text",
-            text: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n已创建的对象：${definedVariables.join(", ") || "无"}。请继续下一步。`,
+            text: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n画布上的对象：${liveObjects}。请继续下一步。`,
           },
         ],
       });
@@ -806,18 +817,30 @@ export async function generateFromDescriptionWithSteps(
     stepCount++;
     console.log(`\n=== 开始第 ${stepCount} 轮调用 ===`);
 
-    const definedVariables = allCommands
-      .map(cmd => {
-        const match = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
-        return match ? match[1] : null;
-      })
-      .filter(Boolean);
+    // 从画布实时获取对象列表，而非用命令历史推断（历史在 Delete 后会过时）
+    let definedVariables = "";
+    if (onGetCanvasState) {
+      try {
+        const state = await onGetCanvasState();
+        definedVariables = state.objects.length > 0
+          ? state.objects.map(o => `${o.name}(${o.type})`).join(", ")
+          : "无";
+      } catch {
+        definedVariables = allCommands
+          .map(cmd => { const m = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/); return m ? m[1] : null; })
+          .filter(Boolean).join(", ") || "无";
+      }
+    } else {
+      definedVariables = allCommands
+        .map(cmd => { const m = cmd.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/); return m ? m[1] : null; })
+        .filter(Boolean).join(", ") || "无";
+    }
 
     const messagesWithContext: ModelMessage[] = [...messages];
     if (allCommands.length > 0) {
       messagesWithContext.push({
         role: "user",
-        content: [{ type: "text", text: `[提醒]已创建的对象：${definedVariables.join(", ")}。请确保只引用这些已定义的对象，不要引用不存在的变量。` }],
+        content: [{ type: "text", text: `[提醒]画布上的对象：${definedVariables}。请确保只引用这些存在的对象，不要引用不存在的变量。` }],
       });
     }
 
@@ -922,6 +945,21 @@ export async function generateFromDescriptionWithSteps(
         expectedResult: args.expectedResult,
       });
 
+      // 从画布实时获取对象列表
+      let liveObjects = "";
+      if (onGetCanvasState) {
+        try {
+          const state = await onGetCanvasState();
+          liveObjects = state.objects.length > 0
+            ? state.objects.map(o => `${o.name}(${o.type})`).join(", ")
+            : "无";
+        } catch {
+          liveObjects = "查询失败";
+        }
+      } else {
+        liveObjects = definedVariables || "无";
+      }
+
       messages.push({
         role: "assistant",
         content: result.text || JSON.stringify(toolCall),
@@ -932,7 +970,7 @@ export async function generateFromDescriptionWithSteps(
         content: [
           {
             type: "text",
-            text: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n已创建的对象：${definedVariables.join(", ") || "无"}。请继续下一步。`,
+            text: `执行结果: ${executionResult.success ? "成功" : "失败"}${executionResult.error ? `, 错误: ${executionResult.error}` : ""}\n\n画布上的对象：${liveObjects}。请继续下一步。`,
           },
         ],
       });
