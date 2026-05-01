@@ -21,9 +21,11 @@ import {
   generateFromDescriptionWithSteps,
   generateSingleStepScript,
   generateMobileCommandScript,
+  generateMobileCanvasQueryScript,
   type GeoGebraStep,
-} from "../../utils/geogebraAgent";
-import { useActiveLLMProvider, useLLMProviderStore } from "../../stores/llmProviderStore";
+  type CanvasObject,
+} from "@/utils/geogebraAgent";
+import { useActiveLLMProvider, useLLMProviderStore } from "@/stores/llmProviderStore";
 import { useConversationStore } from "@/stores/conversationStore";
 import ConversationList from "@/components/ConversationList";
 
@@ -91,9 +93,11 @@ function ToolButton({
 function AIChatPanel({
   webViewRef,
   executeGeoGebraCommand,
+  getCanvasState,
 }: {
   webViewRef: React.RefObject<any>;
   executeGeoGebraCommand: (command: string) => Promise<CommandResult>;
+  getCanvasState: () => Promise<{ objects: CanvasObject[] }>;
 }) {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -281,7 +285,8 @@ function AIChatPanel({
           handleStepExecution,
           inputText.trim() || undefined,
           abortController.signal,
-          historyMessages.length > 0 ? historyMessages : undefined
+          historyMessages.length > 0 ? historyMessages : undefined,
+          getCanvasState
         );
       } else {
         result = await generateFromDescriptionWithSteps(
@@ -289,7 +294,8 @@ function AIChatPanel({
           activeProvider,
           handleStepExecution,
           abortController.signal,
-          historyMessages.length > 0 ? historyMessages : undefined
+          historyMessages.length > 0 ? historyMessages : undefined,
+          getCanvasState
         );
       }
 
@@ -853,9 +859,11 @@ const GEOGEBRA_HTML = `
 function GeoGebraPanel({
   webViewRef,
   onCommandResult,
+  onCanvasState,
 }: {
   webViewRef: React.RefObject<any>;
   onCommandResult?: (result: CommandResult) => void;
+  onCanvasState?: (objects: CanvasObject[]) => void;
 }) {
   const [isAppletReady, setIsAppletReady] = useState(false);
 
@@ -872,11 +880,13 @@ function GeoGebraPanel({
         console.error("[GGB WebView Error]", data.message);
       } else if (data.type === "commandResult" && onCommandResult) {
         onCommandResult({ success: data.success, error: data.error });
+      } else if (data.type === "canvasState" && onCanvasState) {
+        onCanvasState(data.objects || []);
       }
     } catch (e) {
       console.log("[GGB] WebView message:", event.nativeEvent.data);
     }
-  }, [onCommandResult]);
+  }, [onCommandResult, onCanvasState]);
 
   // 处理 WebView 加载事件
   const handleLoadStart = useCallback(() => {
@@ -956,6 +966,12 @@ export default function GeoGebraScreen() {
     timer: ReturnType<typeof setTimeout>;
   } | null>(null);
 
+  // 移动端画布状态查询桥接：postMessage → Promise
+  const canvasStateCallbackRef = useRef<{
+    resolve: (objects: CanvasObject[]) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+
   // 统一的命令执行函数（Web + 移动端）
   const executeGeoGebraCommand = useCallback(
     async (command: string): Promise<CommandResult> => {
@@ -1031,6 +1047,66 @@ export default function GeoGebraScreen() {
     []
   );
 
+  // 获取画布状态函数（Web + 移动端）
+  const getCanvasState = useCallback(
+    async (): Promise<{ objects: CanvasObject[] }> => {
+      if (Platform.OS === "web") {
+        if (
+          ggbAppletInstance &&
+          typeof ggbAppletInstance.getAllObjectNames === "function"
+        ) {
+          try {
+            const names: string[] = ggbAppletInstance.getAllObjectNames();
+            const objects: CanvasObject[] = names.map((name: string) => ({
+              name,
+              type: ggbAppletInstance.getObjectType(name) || "unknown",
+              value: ggbAppletInstance.getValueString(name) || "",
+              definition: ggbAppletInstance.getDefinitionString(name) || "",
+            }));
+            return { objects };
+          } catch {
+            return { objects: [] };
+          }
+        }
+        return { objects: [] };
+      } else {
+        return new Promise((resolve) => {
+          let settled = false;
+          const timer = setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              canvasStateCallbackRef.current = null;
+              resolve({ objects: [] });
+            }
+          }, 5000);
+
+          canvasStateCallbackRef.current = {
+            resolve: (objs: CanvasObject[]) => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timer);
+                canvasStateCallbackRef.current = null;
+                resolve({ objects: objs });
+              }
+            },
+            timer,
+          };
+
+          if (webViewRef.current) {
+            webViewRef.current.injectJavaScript(
+              generateMobileCanvasQueryScript()
+            );
+          } else {
+            clearTimeout(timer);
+            canvasStateCallbackRef.current = null;
+            resolve({ objects: [] });
+          }
+        });
+      }
+    },
+    []
+  );
+
   // 移动端命令结果回调（由 GeoGebraPanel.handleMessage 触发）
   const onCommandResult = useCallback(
     (result: CommandResult) => {
@@ -1043,13 +1119,29 @@ export default function GeoGebraScreen() {
     []
   );
 
-  // 组件卸载时清理挂起的命令
+  // 移动端画布状态回调（由 GeoGebraPanel.handleMessage 触发）
+  const onCanvasStateCallback = useCallback(
+    (objects: CanvasObject[]) => {
+      if (canvasStateCallbackRef.current) {
+        clearTimeout(canvasStateCallbackRef.current.timer);
+        canvasStateCallbackRef.current.resolve(objects);
+        canvasStateCallbackRef.current = null;
+      }
+    },
+    []
+  );
+
+  // 组件卸载时清理挂起的命令和画布查询
   useEffect(() => {
     return () => {
       if (pendingCommandRef.current) {
         clearTimeout(pendingCommandRef.current.timer);
         pendingCommandRef.current.reject(new Error("组件已卸载"));
         pendingCommandRef.current = null;
+      }
+      if (canvasStateCallbackRef.current) {
+        clearTimeout(canvasStateCallbackRef.current.timer);
+        canvasStateCallbackRef.current = null;
       }
     };
   }, []);
@@ -1067,12 +1159,14 @@ export default function GeoGebraScreen() {
               <AIChatPanel
                 webViewRef={webViewRef}
                 executeGeoGebraCommand={executeGeoGebraCommand}
+                getCanvasState={getCanvasState}
               />
             </View>
             <View style={[styles.rightPanel, { width: width * 0.65 }]}>
               <GeoGebraPanel
                 webViewRef={webViewRef}
                 onCommandResult={onCommandResult}
+                onCanvasState={onCanvasStateCallback}
               />
             </View>
           </View>
@@ -1093,12 +1187,14 @@ export default function GeoGebraScreen() {
             <GeoGebraPanel
               webViewRef={webViewRef}
               onCommandResult={onCommandResult}
+              onCanvasState={onCanvasStateCallback}
             />
           </View>
           <View style={styles.bottomPanel}>
             <AIChatPanel
               webViewRef={webViewRef}
               executeGeoGebraCommand={executeGeoGebraCommand}
+              getCanvasState={getCanvasState}
             />
           </View>
         </View>

@@ -22,6 +22,17 @@ export type GeoGebraStep = {
 // 步骤执行回调类型
 export type StepExecutionCallback = (step: GeoGebraStep) => Promise<{ success: boolean; error?: string }>;
 
+// 画布对象信息
+export type CanvasObject = {
+  name: string;
+  type: string;
+  value: string;
+  definition: string;
+};
+
+// 获取画布状态回调类型
+export type GetCanvasStateCallback = () => Promise<{ objects: CanvasObject[] }>;
+
 /**
  * 从 AI 响应中提取工具调用
  *
@@ -204,8 +215,18 @@ export function generateMobileCommandScript(command: string): string {
 }
 
 /**
+ * 生成移动端画布状态查询脚本
+ *
+ * 通过 postMessage 将画布上所有对象的名称、类型、值、定义返回给 RN 层。
+ * 用于 get_canvas_state 工具在移动端的实现。
+ */
+export function generateMobileCanvasQueryScript(): string {
+  return `(function(){try{if(typeof ggbApplet!=="undefined"&&ggbApplet.getAllObjectNames){var names=ggbApplet.getAllObjectNames();var objects=[];for(var i=0;i<names.length;i++){var n=names[i];try{objects.push({name:n,type:ggbApplet.getObjectType(n)||"unknown",value:ggbApplet.getValueString(n)||"",definition:ggbApplet.getDefinitionString(n)||""});}catch(e){objects.push({name:n,type:"error",value:"",definition:""});}}window.ReactNativeWebView.postMessage(JSON.stringify({type:"canvasState",objects:objects}));}else{window.ReactNativeWebView.postMessage(JSON.stringify({type:"canvasState",objects:[]}));}}catch(e){try{window.ReactNativeWebView.postMessage(JSON.stringify({type:"canvasState",objects:[],error:e.toString()}));}catch(e2){}}})();`;
+}
+
+/**
  * 分析图片并逐步生成 GeoGebra 指令（function calling 模式）
- * 
+ *
  * 使用 ai SDK 的 function calling 特性，模型会调用工具而不是返回 JSON 文本
  */
 export async function analyzeImageWithSteps(
@@ -214,7 +235,8 @@ export async function analyzeImageWithSteps(
   onStepExecution: StepExecutionCallback,
   userPrompt?: string,
   signal?: AbortSignal,
-  historyMessages?: ModelMessage[]
+  historyMessages?: ModelMessage[],
+  onGetCanvasState?: GetCanvasStateCallback
 ): Promise<{ description: string; elements: unknown[]; suggestedSteps: string[] }> {
   const client = createAIClient(provider);
   const base64Image = await imageToBase64(imageUri);
@@ -223,8 +245,25 @@ export async function analyzeImageWithSteps(
   const useOpenRouter = isOpenRouterProvider(provider);
 
   const isFollowUp = historyMessages && historyMessages.length > 0;
+
+  // 跟进修改时，先查询画布现有对象，避免 AI 重新创建已有对象导致画布被清空
+  let existingStateHint = "";
+  if (isFollowUp && onGetCanvasState) {
+    try {
+      const state = await onGetCanvasState();
+      if (state.objects.length > 0) {
+        const objectSummary = state.objects
+          .map((o) => `${o.name} (${o.type}): ${o.definition || o.value}`)
+          .join("\n  ");
+        existingStateHint = `\n\n## 画布上已有的对象（请勿重新创建，只需修改/补充）\n  ${objectSummary}\n\n在修改之前，你也可以调用 get_canvas_state 工具重新查询画布状态。`;
+      }
+    } catch {
+      // 查询失败不阻塞，AI 可以自己调用 get_canvas_state
+    }
+  }
+
   const followUpNote = isFollowUp
-    ? "\n\n[注意：这是对现有图形的修改/补充。请基于当前画布上已有的内容进行操作，不要重新创建。]"
+    ? `\n\n[注意：这是对现有图形的修改/补充。不要重新创建已有对象！可以直接修改对象的颜色、样式、位置，或添加新元素。如需了解画布上的对象，调用 get_canvas_state 工具。]${existingStateHint}`
     : "";
 
   const userMessageContent = userPrompt
@@ -323,7 +362,21 @@ export async function analyzeImageWithSteps(
 
 ## 错误示例（不要这样做）
 步骤5: s = Polygon(A, B, C, D)
-步骤6: p = PerpendicularLine(E, AB)  // 错误！AB不存在！`;
+步骤6: p = PerpendicularLine(E, AB)  // 错误！AB不存在！
+
+## 获取画布状态
+在对已有图形进行修改时，先调用 get_canvas_state 工具（无需参数）查看画布上已有的对象。
+返回每个对象的名称、类型、值和定义命令。根据查询结果决定修改哪些对象。
+
+## 修改对象
+- 修改颜色：SetColor(A, "red")  颜色可选: red, blue, green, yellow, orange, purple, black, white, gray, pink, cyan
+- 修改颜色 RGB：SetColor(A, 1, 0, 0)  参数范围 0-1
+- 删除对象：Delete[A]  删除点A，或 Delete[s] 删除线段s
+- 隐藏/显示：SetVisibleInView(A, 1, false)  1=主视图, 2=代数视图
+- 修改标签：SetCaption(s, "我的线段")
+- 修改线宽：SetLineThickness(s, 3)
+- 修改点大小：SetPointSize(A, 5)
+- 修改填充：SetFilling(s, 0.5)  透明度 0-1`;
 
   let finalResult: { description: string; elements: unknown[]; suggestedSteps: string[] } | null = null;
   const allSteps: string[] = [];
@@ -357,6 +410,7 @@ export async function analyzeImageWithSteps(
       tools: {
         execute_geo_gebra_step: executeGeoGebraStepTool,
         complete_geo_gebra_task: completeGeoGebraTaskTool,
+        get_canvas_state: getCanvasStateTool,
       },
       toolChoice: useOpenRouter ? "auto" : "required",
       abortSignal: signal,
@@ -379,6 +433,43 @@ export async function analyzeImageWithSteps(
           text: "你没有调用任何工具。请调用 execute_geo_gebra_step 执行下一步绘图命令，或调用 complete_geo_gebra_task 表示任务完成。如果你已完成所有步骤，请调用 complete_geo_gebra_task。",
         }],
       });
+      continue;
+    }
+
+    if (toolCall.toolName === "get_canvas_state") {
+      // 查询画布状态
+      if (onGetCanvasState) {
+        try {
+          const state = await onGetCanvasState();
+          const objectSummary =
+            state.objects.length > 0
+              ? state.objects
+                  .map((o) => `${o.name} (${o.type}): ${o.definition || o.value}`)
+                  .join("\n  ")
+              : "(画布为空)";
+          messages.push({
+            role: "assistant",
+            content: result.text || `query canvas state`,
+          });
+          messages.push({
+            role: "user",
+            content: [{
+              type: "text",
+              text: `画布上当前的对象：\n  ${objectSummary}\n\n请基于这些已有对象继续操作。`,
+            }],
+          });
+        } catch {
+          messages.push({
+            role: "user",
+            content: [{ type: "text", text: "查询画布状态失败。请继续操作。" }],
+          });
+        }
+      } else {
+        messages.push({
+          role: "user",
+          content: [{ type: "text", text: "无法查询画布状态（不支持此操作）。请继续。" }],
+        });
+      }
       continue;
     }
 
@@ -455,18 +546,33 @@ export async function generateFromDescriptionWithSteps(
   provider: LLMProvider,
   onStepExecution: StepExecutionCallback,
   signal?: AbortSignal,
-  historyMessages?: ModelMessage[]
+  historyMessages?: ModelMessage[],
+  onGetCanvasState?: GetCanvasStateCallback
 ): Promise<{ description: string; elements: unknown[]; suggestedSteps: string[] }> {
   const client = createAIClient(provider);
   const modelName = getModelName(provider, false);
   const useOpenRouter = isOpenRouterProvider(provider);
 
   const isFollowUp = historyMessages && historyMessages.length > 0;
+
+  let existingStateHint = "";
+  if (isFollowUp && onGetCanvasState) {
+    try {
+      const state = await onGetCanvasState();
+      if (state.objects.length > 0) {
+        const objectSummary = state.objects
+          .map((o) => `${o.name} (${o.type}): ${o.definition || o.value}`)
+          .join("\n  ");
+        existingStateHint = `\n\n## 画布上已有的对象（请勿重新创建，只需修改/补充）\n  ${objectSummary}\n\n在修改之前，你也可以调用 get_canvas_state 工具重新查询画布状态。`;
+      }
+    } catch {}
+  }
+
   const followUpNote = isFollowUp
-    ? "\n\n[注意：这是对现有图形的修改/补充。请基于当前画布上已有的内容进行操作，不要重新创建。]"
+    ? `\n\n[注意：这是对现有图形的修改/补充。不要重新创建已有对象！可以直接修改对象的颜色、样式、位置，或添加新元素。如需了解画布上的对象，调用 get_canvas_state 工具。]${existingStateHint}`
     : "";
 
-  const systemPrompt = `你是一个专业的几何绘图助手，使用 GeoGebra 根据描述绘制几何图形。${followUpNote}
+  const systemPrompt = `你是一个专业的几何绘图助手，使用 GeoGebra 根据描述绘制几何图形。
 
 ## 执行规则（必须遵守）
 1. 理解描述，规划作图步骤
@@ -558,7 +664,21 @@ export async function generateFromDescriptionWithSteps(
 
 ## 错误示例（不要这样做）
 步骤5: s = Polygon(A, B, C, D)
-步骤6: p = PerpendicularLine(E, AB)  // 错误！AB不存在！`;
+步骤6: p = PerpendicularLine(E, AB)  // 错误！AB不存在！
+
+## 获取画布状态
+在对已有图形进行修改时，先调用 get_canvas_state 工具（无需参数）查看画布上已有的对象。
+返回每个对象的名称、类型、值和定义命令。根据查询结果决定修改哪些对象。
+
+## 修改对象
+- 修改颜色：SetColor(A, "red")  颜色可选: red, blue, green, yellow, orange, purple, black, white, gray, pink, cyan
+- 修改颜色 RGB：SetColor(A, 1, 0, 0)  参数范围 0-1
+- 删除对象：Delete[A]  删除点A，或 Delete[s] 删除线段s
+- 隐藏/显示：SetVisibleInView(A, 1, false)  1=主视图, 2=代数视图
+- 修改标签：SetCaption(s, "我的线段")
+- 修改线宽：SetLineThickness(s, 3)
+- 修改点大小：SetPointSize(A, 5)
+- 修改填充：SetFilling(s, 0.5)  透明度 0-1`;
 
   let finalResult: { description: string; elements: unknown[]; suggestedSteps: string[] } | null = null;
   const allSteps: string[] = [];
@@ -599,6 +719,7 @@ export async function generateFromDescriptionWithSteps(
       tools: {
         execute_geo_gebra_step: executeGeoGebraStepTool,
         complete_geo_gebra_task: completeGeoGebraTaskTool,
+        get_canvas_state: getCanvasStateTool,
       },
       toolChoice: useOpenRouter ? "auto" : "required",
       abortSignal: signal,
@@ -620,6 +741,42 @@ export async function generateFromDescriptionWithSteps(
           text: "你没有调用任何工具。请调用 execute_geo_gebra_step 执行下一步绘图命令，或调用 complete_geo_gebra_task 表示任务完成。如果你已完成所有步骤，请调用 complete_geo_gebra_task。",
         }],
       });
+      continue;
+    }
+
+    if (toolCall.toolName === "get_canvas_state") {
+      if (onGetCanvasState) {
+        try {
+          const state = await onGetCanvasState();
+          const objectSummary =
+            state.objects.length > 0
+              ? state.objects
+                  .map((o) => `${o.name} (${o.type}): ${o.definition || o.value}`)
+                  .join("\n  ")
+              : "(画布为空)";
+          messages.push({
+            role: "assistant",
+            content: result.text || `query canvas state`,
+          });
+          messages.push({
+            role: "user",
+            content: [{
+              type: "text",
+              text: `画布上当前的对象：\n  ${objectSummary}\n\n请基于这些已有对象继续操作。`,
+            }],
+          });
+        } catch {
+          messages.push({
+            role: "user",
+            content: [{ type: "text", text: "查询画布状态失败。请继续操作。" }],
+          });
+        }
+      } else {
+        messages.push({
+          role: "user",
+          content: [{ type: "text", text: "无法查询画布状态（不支持此操作）。请继续。" }],
+        });
+      }
       continue;
     }
 
@@ -706,6 +863,14 @@ const completeGeoGebraTaskTool = tool({
     finalElements: z.array(z.string()).describe("最终创建的元素名称列表"),
     finalSteps: z.array(z.string()).describe("步骤总结列表"),
   }),
+  strict: true,
+});
+
+// 获取画布状态工具：模型查询当前画布上的所有对象
+const getCanvasStateTool = tool({
+  description:
+    "获取当前画布上所有对象的列表。在修改或补充现有图形之前，先调用此工具了解已有的对象，避免重复创建或引用不存在的对象。返回每个对象的名称、类型、值和定义命令。",
+  inputSchema: z.object({}),
   strict: true,
 });
 
