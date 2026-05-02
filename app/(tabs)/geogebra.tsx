@@ -14,6 +14,16 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+// React Native's Alert.alert does not render on web (react-native-web).
+// Use a Platform-aware wrapper so error messages are visible everywhere.
+function showAlert(title: string, message: string) {
+  if (Platform.OS === "web") {
+    window.alert(`${title}\n\n${message}`);
+  } else {
+    Alert.alert(title, message);
+  }
+}
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import {
@@ -210,7 +220,7 @@ function AIChatPanel({
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert("权限错误", "需要访问相册权限才能选择图片");
+      showAlert("权限错误", "需要访问相册权限才能选择图片");
       return;
     }
 
@@ -230,7 +240,7 @@ function AIChatPanel({
   const takePhoto = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert("权限错误", "需要相机权限才能拍照");
+      showAlert("权限错误", "需要相机权限才能拍照");
       return;
     }
 
@@ -308,7 +318,7 @@ function AIChatPanel({
 
     if (!inputText.trim() && !selectedImage) return;
     if (!activeProvider) {
-      Alert.alert("错误", "请先配置 LLM 提供商");
+      showAlert("错误", "请先配置 LLM 提供商");
       return;
     }
 
